@@ -1,0 +1,42 @@
+service motionDetectedHandler :: hostA (x) :=
+  i := 0;
+  while (true) {
+    get(motion,((motion_sensor,house), \"\"));
+    if (motion = 1) then
+      act(setLevel_80,(switch,house),\"\")
+    else
+      skip
+    fi;
+    i := i + 1
+  };
+  return ~(return $motion)
+
+service motionStoppedHandler :: hostA (x) :=
+  i := 0;
+  while (i <= x) {
+    get(motion,((motion_sensor,house), \"\"));
+    if (motion = 0) then
+      act(setLevel_0,(switch,house),\"\")
+    else
+      skip
+    fi;
+    i := i + 1
+  };
+  return ~(return $motion)
+
+service bad_service :: hostB (x) :=
+  i := 0;
+  while (i <= x) {
+    get(v, ((switch,house),\"\"));
+    if (v = 0) then
+      act(setLevel_80, (switch,house),\"\")
+    else
+      act(setLevel_0, (switch,house),\"\")
+    fi;
+    i := i + 1
+  };
+  return v
+
+client 1 call (motionDetectedHandler) := 10
+client 2 call (motionStoppedHandler) := 20
+bad client 3 call (bad_service) := 10

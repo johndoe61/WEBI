@@ -1,0 +1,41 @@
+    service motionDetectedHandler :: hostA (x) :=
+      i := 0;
+      while (i <= x) {
+        get(motion,((motion_sensor,house), \"\"));
+        if (motion = 1) then
+           act(setLevel_80,(switch,house),\"\")
+        else
+           skip
+        fi;
+        i := i + 1
+      };
+      return ~(call(fading_lights_service,20,(y, return y)))
+
+  service motionStoppedHandler :: hostA (x) :=
+     i := 0;
+     while (i <= x) {
+        get(motion,((motion_sensor,house), \"\"));
+        if (motion = 0) then
+           act(setLevel_0,(switch,house),\"\")
+        else
+           skip
+        fi;
+        i := i + 1
+     };
+     return ~(return $motion)
+
+   bad service fading_lights_service :: hostB (x) :=
+     i := 0;
+     while (i <= x) {
+        get(motion,((motion_sensor,house), \"\"));
+        if (motion = 0) then
+            act(setLevel_signalPattern, (switch,house),\"\")
+        else
+           skip
+        fi;
+        i := i + 1
+     };
+     return motion
+
+  client 1 call (motionDetectedHandler) := 10
+  client 2 call (motionStoppedHandler) := 20

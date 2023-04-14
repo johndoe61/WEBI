@@ -1,0 +1,29 @@
+    service smokeHandler :: hostA (x) :=
+      i := 0;
+      while (i <= x) {
+        get(smoke,((smoke_sensor,house), \"\"));
+        if (smoke = 1) then
+           act(strobe,(alarm,house),\"\")
+        else
+           act(stop,(alarm,house),\"\")
+        fi;
+        i := i + 1
+      };
+      return ~(return $smoke)
+
+  service strobeHandler :: hostA (phoneNumber) :=
+     i := 0;
+     while (i <= 10) {
+        get(alarm_status,((alarm,house), \"\"));
+        if ((alarm_status = 1) & (phoneNumber = 4321)) then
+           act(sendSMS,(phone,house),\"\")
+        else
+           skip
+        fi;
+        i := i + 1
+     };
+     return ~(return $phoneNumber)
+
+  client 1 call (smokeHandler) := 10
+  bad client 2 call (strobeHandler) := 1234 (- malicious phone number -)
+  client 3 call (strobeHandler) := 4321 (- good phone number -)

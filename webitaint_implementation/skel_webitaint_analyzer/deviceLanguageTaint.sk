@@ -1,0 +1,140 @@
+open wtypes
+
+type dv_val_type := not_implemented
+type dv_val := value_ext<dv_val_type>
+
+(*All components of IC are specfied in the Device module.*)
+type deviceMemory := state<dv_val>(*mu_d*)
+type deviceReactions := _list<reaction> (*S*)
+type actions := _list<actuator>
+type permissions := _list<permission>
+type deviceConfiguration = (state : deviceMemory,
+                            _S_ : deviceReactions,
+                            _A_ : actions,
+                            perm : permissions,
+                            id : deviceID,
+                            taint : taint)
+
+
+type deviceConfigurations := _list<deviceConfiguration>
+
+type dv_stmt =
+| Sens physicalEvent
+| Reading (deviceID,permission)
+| Actuator (actuator, deviceID,permission)
+
+
+
+val get_device (dvs:deviceConfigurations) (d:deviceID) : voption<deviceConfiguration> =
+  let foreach = λ recall : ((deviceConfigurations,deviceID) -> voption<deviceConfiguration>) ->
+                  λ (dvs,d): (deviceConfigurations,deviceID) ->
+                    branch let T = lempty<deviceConfiguration> dvs in VNone<deviceConfiguration>
+                    or     let F = lempty<deviceConfiguration> dvs in
+                           let (dv,dvs') = lhd<deviceConfiguration> dvs in
+                           let b = eq_deviceID(dv.id,d) in
+                           branch let T = b in
+                                  VSome<deviceConfiguration> dv
+                           or     let F = b in
+                                  recall (dvs',d)
+                           end
+                    end in
+   fix<(deviceConfigurations,deviceID),voption<deviceConfiguration>> foreach (dvs,d)
+
+(*use partition*)
+val split_device (dvs:deviceConfigurations) (d:deviceID) (dvsacc:_list<deviceConfiguration>) : (voption<deviceConfiguration>,_list<deviceConfiguration>) =
+  let foreach = λ recall : ((deviceConfigurations,deviceID,deviceConfigurations) -> (voption<deviceConfiguration>,_list<deviceConfiguration>)) ->
+                  λ (dvs,d,dvsacc): (deviceConfigurations,deviceID,deviceConfigurations) ->
+                    branch let T = lempty<deviceConfiguration> dvs in (VNone<deviceConfiguration>,dvsacc)
+                    or     let F = lempty<deviceConfiguration> dvs in
+                           let (dv,dvs') = lhd<deviceConfiguration> dvs in
+                           branch let T = eq_deviceID(d,dv.id) in
+                                  let dvsacc' = lappend<deviceConfiguration>(dvsacc, dvs') in
+                                  (VSome<deviceConfiguration> dv,dvsacc')
+                           or     let F = eq_deviceID(d,dv.id) in
+                                  let dvsacc' = ladd<deviceConfiguration>(dv,dvsacc) in
+                                  recall (dvs', d, dvsacc')
+                           end
+                    end in
+   fix<(deviceConfigurations,deviceID,deviceConfigurations),(voption<deviceConfiguration>,_list<deviceConfiguration>)> foreach (dvs,d,dvsacc)
+
+
+
+type dv_step = ( device : deviceName,
+                 _GET_ : voption<deviceMemory -> (dv_val,deviceMemory)>,
+                 _ACT_ : voption<deviceMemory -> actuator -> ((),deviceMemory)>,
+                 _SENS_ : voption<deviceMemory -> dv_val -> ((),deviceMemory)>)
+
+type dvs_step := _list<dv_step>
+
+val dv_step_get (dvs:_list<dv_step>) (name:deviceName) : dv_step =
+    let (step,dvs') = lhd<dv_step> dvs in
+    let b = eq_deviceName(name,step.device) in
+    match b with
+    | T -> step
+    | F -> let step' = dv_step_get dvs' name in step'
+    end
+
+val dv_get (_IC_:deviceConfigurations) (id:deviceID) : (deviceConfiguration,deviceConfigurations) =
+    let (ic,_IC_') = lhd<deviceConfiguration> _IC_ in
+    let b = eq_deviceID(id,ic.id) in
+    match b with
+    | T -> (ic,_IC_')
+    | F -> let (ic',_IC_'') = dv_get _IC_' id in
+           let _IC_''' = dv_add_end _IC_'' ic in
+           (ic',_IC_''')
+    end
+
+val dv_add (_IC_:deviceConfigurations) (ic:deviceConfiguration) : deviceConfigurations =
+    ladd<deviceConfiguration>(ic,_IC_)
+
+val dv_add_end (_IC_:deviceConfigurations) (ic:deviceConfiguration) : deviceConfigurations =
+    ladd_end<deviceConfiguration>(_IC_,ic)
+
+val dv_mem_get : var -> deviceMemory -> (dv_val,deviceMemory) = st_read<dv_val>
+val dv_mem_set : var -> dv_val -> deviceMemory -> ((),deviceMemory) = st_write<dv_val>
+
+val init_dvs_step : dvs_step  = lmk_empty<dv_step>
+
+val ic_eval (dvs:dvs_step) (_IC_:deviceConfigurations) (i:dv_stmt) : (deviceConfigurations,voption<dv_val>) =
+  match i with
+  | Sens ((name,loc),v) ->
+     let dvt = dv_step_get dvs name in
+     let (ic,_IC_') = dv_get _IC_ (name,loc) in
+     let VSome sens = dvt._SENS_ in
+     let (_,d_mu') = sens ic.state v in
+     let _IC_'' = dv_add _IC_' (ic <- (state = d_mu')) in
+     (_IC_'',VNone<dv_val>)
+  | Reading ((name,loc),_) ->
+     let dvt = dv_step_get dvs name in
+     let (ic,_IC_') = dv_get _IC_ (name,loc) in
+     let VSome get = dvt._GET_ in
+     let (v,_) = get ic.state in
+     let _IC_'' = dv_add _IC_' ic in
+     (_IC_'',VSome<dv_val> v)
+  | Actuator (a,(name,loc),_) ->
+     let dvt = dv_step_get dvs name in
+     let (ic,_IC_') = dv_get _IC_ (name,loc) in
+     let VSome act = dvt._ACT_ in
+     let (_,d_mu') = act ic.state a in
+     let _IC_'' = dv_add _IC_' (ic <- (state = d_mu')) in
+     (_IC_'',VNone<dv_val>)
+  end
+
+val mk_device
+      (name : deviceName)
+      (device_get : voption<deviceMemory -> (dv_val,deviceMemory)>)
+      (device_act : voption<deviceMemory -> actuator -> ((),deviceMemory)>)
+      (device_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)>) :
+  dv_step =
+  (device = name,
+   _GET_ = device_get,
+   _ACT_ = device_act,
+   _SENS_ = device_sens)
+
+val mk_deviceConfiguration (mu_d : deviceMemory) (rs : deviceReactions) (as : actions) (ps : permissions) (did: deviceID) (t:taint) : deviceConfiguration =
+    (state = mu_d,
+     _S_ = rs,
+     _A_ = as,
+     perm = ps,
+     id = did,
+     taint = t)

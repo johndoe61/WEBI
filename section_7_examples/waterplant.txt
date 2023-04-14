@@ -1,0 +1,43 @@
+ service addChemicals :: hostA (x) :=
+   i := 0;
+   while (i <= x) {
+     act(add_sodium,(sodium_dispenser,waterplant),\"\");
+     i := i + 1
+   };
+   return x
+
+ service attack :: hostB (x) :=
+   return ~(call(addChemicals,$x,(y, return y)))
+
+ bad client 1 call (attack) := 10
+
+ service alarmHandler :: hostA (x) :=
+   i := 0;
+   while (i <= x) {
+     get(level,((sodium_sensor,waterplant),\"\"));
+     if (level <= 6) then
+       act(strobe,(alarm,waterplant),\"\")
+     else
+       skip
+     fi;
+     i := i + 1
+   };
+   return ~(return $x)
+
+ client 2 call (alarmHandler) := 10
+
+ service waterDistributionHandler :: hostA (x) :=
+   i := 0;
+   while (i <= x) {
+     get(level,((sodium_sensor,valve),\"\"));
+     if (level <= 4) then
+       act(valve_open,(valve,waterplant),\"\");
+       act(valve_close,(valve,waterplant),\"\")
+     else
+       skip
+     fi;
+     i := i + 1
+   };
+   return ~(return $x)
+
+ client 3 call (waterDistributionHandler) := 10

@@ -1,0 +1,19 @@
+Execution Summary:
+
+This execution returns ERROR!
+The tainted sink has device_id = (window,kitchen)
+Execution Trace =
+ServiceInit => ID : 1, URL : virtualAssistantVoice, TAINTED : no, TIME : 0
+ServiceStep => ID : (1,1), HOST : hostA, TAINTED : no, TIME : 0
+DeviceSensor => EVENT : PE virtual_assistant living_room lightOnPlease TIME 0, TIME : 0
+DeviceReading => ID : 1, SID : 1, DEVICE_ID : (virtual_assistant,living_room), VALUE : lightOnPlease, TAINTED : no, TIME : 1
+ServiceStep => ID : (1,1), HOST : hostA, TAINTED : no, TIME : 1
+ServiceStep => ID : (1,1), HOST : hostA, TAINTED : no, TIME : 1
+ServiceStep => ID : (1,1), HOST : hostA, TAINTED : no, TIME : 1
+ServiceStep => ID : (1,1), HOST : hostA, TAINTED : no, TIME : 1
+RetServiceBoot => ID : 1, URL : virtualAssistantVoice, TAINTED : no, TIME : 1
+ClientStep => ID : 1, URL : virtualAssistantVoice, TAINTED : no, TIME : 1
+ClientCallUnsafe => ID : 1, URL : lightOnPlease, SID : 2, TAINTED : yes, TIME : 1
+ServiceStep => ID : (1,2), HOST : hostB, TAINTED : yes, TIME : 1
+DeviceSensor => EVENT : PE virtual_assistant living_room lightOnPlease TIME 1, TIME : 1
+DeviceActuatorUnsafe => EVENT : ACT window_open DEVICE_NAME : window LOCATION kitchen TIME 2, TAINTED : yes, TIME : 2

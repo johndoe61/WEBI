@@ -1,0 +1,174 @@
+open wtypes
+
+type data_state := state<sr_val>
+
+val sr_bind<a,b> (w: st<sr_val,a>) (f : a -> st<sr_val,b>) : st<sr_val,b> = st_bind<sr_val,a,b> w f
+binder @ := sr_bind
+
+val sr_read : st_read_t<sr_val> = st_read<sr_val>
+val sr_write : st_write_t<sr_val> = st_write<sr_val>
+
+val sr_m_read<a> ((x,r_f) : (var,st_read_t<sr_val>)) (f : sr_val → st<sr_val,a>): st<sr_val,a> =
+  st_m_read<sr_val,a> (x,r_f) f
+
+val sr_m_write<a> ((x,v,w_f):(var,sr_val,st_write_t<sr_val>) ) (f: () → st<sr_val,a>) : st<sr_val,a> =
+  st_m_write<sr_val,(),a> (x,v,w_f) f
+
+binder /r := sr_m_read
+binder /w := sr_m_write
+
+val sr_ret<a> (v:a) : st<sr_val,a> = st_ret<sr_val,a> v
+
+(* server values *)
+type sr_val_type = | TildeClos t_language
+type sr_val := value_ext<sr_val_type>
+
+(* server expressions *)
+type sr_expr_ext = | Tilde t_language
+type sr_expr := expr_ext<sr_expr_ext, sr_val>
+
+val eval_sr_expr  (ex:sr_expr ): st<sr_val,sr_val> =
+  match ex with
+  | ExtExpr (Tilde s) -> let s' =@ fi s in
+                        sr_ret<sr_val> (ExtValue<sr_val_type> (TildeClos s'))
+  | Expr e -> match e with
+              | Value v -> sr_ret<sr_val> v
+              | Var x -> let v =/r (x,sr_read) in
+                         sr_ret<sr_val> v
+              | BOp (o,e1,e2) -> let Std v1 =@ eval_sr_expr e1 in
+                                 let Std v2 =@ eval_sr_expr e2 in
+                                 let v = eval_bop (o,v1,v2) in
+                                 sr_ret<sr_val> (Std<sr_val_type> v)
+              | UOp (o,e) -> let Std v =@ eval_sr_expr e in
+                             let v' = eval_uop (o,v) in
+                             sr_ret<sr_val> (Std<sr_val_type> v')
+              end
+   end
+
+val fi  (s:t_language ): st<sr_val,t_language> =
+  match s with
+  | ExtSTMT (T_Call (u,v_s,(x_p,p))) ->
+     let v_s' =@ match v_s with
+                 | D de ->
+                    let Expr (Value v_s') =@ xi de in
+                    sr_ret<sr_t_val> v_s'
+                 | V v_s' ->
+                    sr_ret<sr_t_val> v_s'
+                 end in
+     let p' =@ fi p in
+     sr_ret<t_language> (ExtSTMT<t_stmt,sr_t_expr> (T_Call (u,V v_s',(x_p,p'))))
+   | Pure s ->
+      match s with
+      | Ass (x,e) ->
+         let v' =@ xi e in
+         sr_ret<t_language> (Pure<t_stmt,sr_t_expr> (Ass<t_stmt,sr_t_expr> (x, v')))
+      | Seq (s1,s2) ->
+         let s1' =@ fi s1 in
+         let s2' =@ fi s2 in
+         sr_ret<t_language> (Pure<t_stmt,sr_t_expr> (Seq<t_stmt,sr_t_expr> (s1',s2')))
+      | Cond (e,s1,s2) ->
+         let e' =@ xi e in
+         let s1' =@ fi s1 in
+         let s2' =@ fi s2 in
+         sr_ret<t_language> (Pure<t_stmt,sr_t_expr> (Cond<t_stmt,sr_t_expr> (e',s1',s2')))
+      | While (e,s'') ->
+         let e' =@ xi e in
+         let s' =@ fi s'' in
+         sr_ret<t_language> (Pure<t_stmt,sr_t_expr> (While<t_stmt,sr_t_expr> (e',s')))
+      | Skip ->
+         sr_ret<t_language> (Pure<t_stmt,sr_t_expr> Skip<t_stmt,sr_t_expr>)
+      | Ret e ->
+         let e' =@ xi e in
+         sr_ret<t_language> (Pure<t_stmt,sr_t_expr> (Ret<t_stmt,sr_t_expr> e'))
+      end
+   end
+
+val xi  (ed:sr_t_expr): st<sr_val,sr_t_expr> =
+  match ed with
+  | ExtExpr (Dollar x) ->
+     let v =/r (x,sr_read) in
+     let v' = val_type_cast<sr_val_type,not_implemented> v in
+     sr_ret<sr_t_expr> (Expr<sr_t_expr_ext, sr_t_val> (Value<sr_t_expr_ext, sr_t_val> v'))
+  | Expr e ->
+     match e with
+     | Value _ -> sr_ret<sr_t_expr> ed
+     | Var _ -> sr_ret<sr_t_expr> ed
+     | BOp (o,a,b) ->
+        let a' =@ xi a in
+        let b' =@ xi b in
+        sr_ret<sr_t_expr> (Expr<sr_t_expr_ext, sr_t_val> (BOp<sr_t_expr_ext, sr_t_val> (o,a',b')))
+     | UOp (o,a) ->
+        let a' =@ xi a in
+        sr_ret<sr_t_expr> (Expr<sr_t_expr_ext, sr_t_val> (UOp<sr_t_expr_ext, sr_t_val> (o,a')))
+     end
+ end
+
+(* server language *)
+type sr_language := stmt_ext<sr_stmt,sr_expr>
+type sr_stmt = | Act (actuator, deviceID,permission) | Get (var,(deviceID,permission)) | Wait var
+type sr_ack = | ActAck (actuator, deviceID, permission) | GetAck (deviceID, permission) | NotifiedGet (value_ext<not_implemented>)
+type sr_not := ack<sr_ack>
+type sr_output := output<sr_val,sr_language,sr_not>
+
+(* tilda expression language *)
+type sr_t_val := value_ext<not_implemented>
+type dollarOrVal = | D sr_t_expr | V sr_t_val
+type sr_t_expr_ext = | Dollar var
+type sr_t_expr := expr_ext<sr_t_expr_ext, sr_t_val>
+type t_language := stmt_ext<t_stmt,sr_t_expr>
+type t_stmt = | T_Call (url,dollarOrVal,(var, t_language))
+val sr_ret_o (o: (sr_output,data_state)) : st<sr_val,(sr_output,data_state)> =
+  st_ret<sr_val,(sr_output,data_state)> o
+
+
+val _act : str
+val _get : str
+val _wait : str
+
+val eval_sr_step (o:sr_output) (ds: data_state) : st<sr_val,(sr_output,data_state)> =
+  match o with
+  | STMT (s,a) ->
+     match s with
+     | Pure s' ->
+        match s' with
+        | Ret e -> let v =@ eval_sr_expr e in
+                   sr_ret_o ((VALUE<sr_val,sr_language,sr_not> v), ds)
+        | Ass (x,e) -> let v =@ eval_sr_expr e in
+                      (x,v,sr_write);/w
+                      sr_ret_o (VALUE<sr_val,sr_language,sr_not>(Std<sr_val_type> Undefined),ds)
+        | Seq (s1,s2) -> let r1 =@ eval_sr_step (STMT<sr_val,sr_language,sr_not> (s1,a)) ds in
+                        match r1 with
+                        | (STMT (s1',ack), ds') ->sr_ret_o (STMT<sr_val,sr_language,sr_not> (Pure<sr_stmt,sr_expr> (Seq<sr_stmt,sr_expr> (s1',s2)),ack),ds')
+                        | (VALUE _,ds') -> sr_ret_o (STMT<sr_val,sr_language,sr_not> (s2,OK<sr_ack>),ds')
+                        | _ -> sr_ret_o (ERROR<sr_val,sr_language,sr_not>,ds)
+                        end
+        | Cond (e,s_t,s_f) -> let Std b =@ eval_sr_expr e in
+                           match b with
+                           | Bool T -> sr_ret_o (STMT<sr_val,sr_language,sr_not> (s_t,OK<sr_ack>),ds)
+                           | Bool F -> sr_ret_o (STMT<sr_val,sr_language,sr_not> (s_f,OK<sr_ack>),ds)
+                           | _ -> sr_ret_o (ERROR<sr_val,sr_language,sr_not>,ds)
+                           end
+        | Skip -> sr_ret_o (VALUE<sr_val,sr_language,sr_not>(Std<sr_val_type> Undefined),ds)
+        | While (e,s_t) -> let Std b =@ eval_sr_expr e in
+                          match b with
+                          | Bool T -> sr_ret_o (STMT<sr_val,sr_language,sr_not> (Pure<sr_stmt,sr_expr> (Seq<sr_stmt,sr_expr> (s_t, s)),OK<sr_ack>),ds)
+                          | Bool F -> sr_ret_o (VALUE<sr_val,sr_language,sr_not> (Std<sr_val_type> Undefined),ds)
+                          | _ -> sr_ret_o (ERROR<sr_val,sr_language,sr_not>,ds)
+                          end
+        end
+     | ExtSTMT s' ->
+        match s' with
+        | Act (a,d,p) -> sr_ret_o (STMT<sr_val,sr_language,sr_not> (Pure<sr_stmt,sr_expr> Skip<sr_stmt,sr_expr>, EXTACK<sr_ack> (ActAck (a,d,p))),ds)
+        | Get (x,(d,p)) -> sr_ret_o (STMT<sr_val,sr_language,sr_not> (ExtSTMT<sr_stmt,sr_expr> (Wait x), EXTACK<sr_ack> (GetAck (d,p))),ds)
+        | Wait x -> match a with
+                    | EXTACK (NotifiedGet (Std v)) -> (x,Std<sr_val_type> v,sr_write);/w
+                                                        sr_ret_o (STMT<sr_val,sr_language,sr_not> (Pure<sr_stmt,sr_expr> Skip<sr_stmt,sr_expr>, OK<sr_ack>),ds)
+                    | EXTACK (NotifiedGet (ExtValue NotImplemented)) -> (x,Std<sr_val_type> Unit,sr_write);/w
+                                              sr_ret_o (STMT<sr_val,sr_language,sr_not> (Pure<sr_stmt,sr_expr> Skip<sr_stmt,sr_expr>, OK<sr_ack>),ds)
+                    | _ -> sr_ret_o (o,ds)
+                   end
+        end
+     end
+  | _ -> sr_ret_o (ERROR<sr_val,sr_language,sr_not>,ds)
+  end
+val _wrong_branch : str

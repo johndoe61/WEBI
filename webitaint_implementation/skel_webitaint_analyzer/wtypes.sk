@@ -1,0 +1,505 @@
+(*-------------- Fix Point ------------------*)
+
+val fix<a, b> (f :((a -> b) -> (a -> b))) (x : a) : b =
+     let g = fix<a, b> f in
+     f g x
+
+type voption<a> =
+| VSome a
+| VNone
+
+type nat
+val zero : nat
+val one : nat
+val minus_one : nat
+
+type taint =
+| Taint
+| Untaint
+
+type out_chan
+val std_out : out_chan
+val flush_out : out_chan -> ()
+(* operations on naturals *)
+
+val add : (nat, nat) -> nat
+val sub : (nat, nat) -> nat
+val mul : (nat, nat) -> nat
+val leq : (nat, nat) -> _bool
+val geq : (nat, nat) -> _bool
+val eq : (nat, nat) -> _bool
+
+
+type _bool = | T | F
+
+(* operations on _booleans *)
+
+val and (bs : (_bool,_bool)) : _bool =
+  match bs with
+  | (T,T) -> T
+  | _ -> F
+  end
+val orb (bs : (_bool,_bool)) : _bool =
+  match bs with
+  | (F,F) -> F
+  | _ -> T
+end
+val xor (bs : (_bool,_bool)) : _bool =
+  match bs with
+  | (T,F) -> T
+  | (F,T) -> T
+  | _ -> F
+end
+
+val not (b:_bool) : _bool =
+  match b with
+  | T -> F
+  | F -> T
+  end
+
+type str
+val str_eq : (str,str) -> _bool
+type url := str
+val url_eq ((x,y) : (var,var)) : _bool =
+  str_eq (x,y)
+type var := str
+val var_eq ((x,y) : (var,var)) : _bool =
+  str_eq (x,y)
+val _print : str -> ()
+val str_concat : (str, _list<str>) -> str
+val str_of_nat : nat -> str
+
+
+(* state monad*)
+
+type state<_>
+val init_state<a> : () -> state<a>
+
+type st<a,b> := state<a> -> (b,state<a>)
+
+val st_bind<a,b,c> (w: st<a,b>) (f : b -> st<a,c>) : st<a,c> =
+  λ s : state<a> ->
+  let (v',s') = w s in
+  f v' s'
+
+val st_ret<a,b> (v : b) : st<a,b> = λ s: state<a> -> (v,s)
+
+type st_read_t<a> := var -> st<a,a>
+
+val st_read<a> : st_read_t<a>
+
+
+val st_m_read<a,b>  ((x,r_f) : (var,st_read_t<a>)) (f : a → st<a,b>): st<a,b> =
+    let w = r_f x in
+    st_bind<a,a,b> w (λ v : a -> f v)
+
+type st_write_t<a> := var -> a -> st<a,()>
+
+val st_write<a> : st_write_t<a>
+
+val st_m_write<a,b,c>  ((x,v,w_f):(var,a,st_write_t<a>) ) (f: () → st<a,c>) : st<a,c> =
+    let unit_state = w_f x v in
+    st_bind<a,(),c> unit_state (λ _ : () -> f ())
+
+(* Language realted stuff *)
+
+(*binary operations*)
+type bop =
+| Add
+| Sub
+| Mul
+| LEq
+| GEq
+| Eq
+| AND
+| OR
+| XOR
+
+(* shared eval bop *)
+
+val eval_bop (o:(bop,value,value)): value =
+  match o with
+  | (Add,v1,v2) ->
+     let Nat n1 = v1 in
+     let Nat n2 = v2 in
+     let n = add(n1,n2) in Nat n
+  | (Sub,v1,v2) ->
+    let Nat n1 = v1 in
+    let Nat n2 = v2 in
+    let n = sub(n1,n2) in Nat n
+  | (Mul,v1,v2) ->
+     let Nat n1 = v1 in
+     let Nat n2 = v2 in
+     let n = mul(n1,n2) in Nat n
+  | (LEq,v1,v2) ->
+     let Nat n1 = v1 in
+     let Nat n2 = v2 in
+     let b = leq(n1,n2) in Bool b
+  | (GEq,v1,v2) ->
+     let Nat n1 = v1 in
+     let Nat n2 = v2 in
+     let b = geq(n1,n2) in Bool b
+  | (Eq,v1,v2) ->
+     match (v1,v2) with
+     | (Nat n1, Nat n2) ->
+        let b = eq (n1,n2) in Bool b
+     | (Bool b1, Bool b2) ->
+        let b = beq(b1,b2) in Bool b
+     | (Str s1, Str s2) ->
+        let b = str_eq(s1,s2) in Bool b
+     | (_,_) -> Bool F
+     end
+  | (AND,v1,v2) ->
+     let Bool b1 = v1 in
+     let Bool b2 = v2 in
+     let b = and(b1,b2) in Bool b
+  | (OR,v1,v2) ->
+     let Bool b1 = v1 in
+     let Bool b2 = v2 in
+     let b = orb(b1,b2) in Bool b
+  | (XOR,v1,v2) ->
+     let Bool b1 = v1 in
+     let Bool b2 = v2 in
+     let b = xor(b1,b2) in Bool b
+  end
+
+val beq ((b1,b2): (_bool,_bool)) : _bool =
+  match (b1,b2) with
+  | (T,T) -> T
+  | (F,F) -> T
+  | (_,_) -> F
+  end
+
+(* unary operation *)
+type uop = | Neg
+
+(* shared eval uop *)
+val eval_uop (o:(uop,value)): value =
+  match o with
+  | (Neg,v) ->
+     match v with
+     | Bool T -> Bool F
+     | Bool F -> Bool T
+     | Nat n -> let n' = mul(n,minus_one) in
+                   Nat n'
+     | _ -> v
+     end
+  end
+
+
+(* shared values of the language *)
+
+
+val pp_deviceID : out_chan -> deviceID -> ()
+
+type actuator := str
+type reaction := not_implemented
+type deviceName := str
+type deviceLocation := str
+type deviceID := (deviceName,deviceLocation)
+type permission := str
+type time := nat
+
+val eq_deviceID ((d1,d2) : (deviceID,deviceID)) : _bool =
+  match (d1,d2) with
+  | ((n1,l1),(n2,l2)) -> let b1 = str_eq(n1,n2) in
+                        let b2 = str_eq(l1,l2) in
+                        match (b1,b2) with
+                        | (T,T) -> T
+                        | _ -> F
+                        end
+  end
+
+val eq_deviceName ((n1,n2):(deviceName,deviceName)) : _bool =
+  str_eq(n1,n2)
+(*L : log of events*)
+
+type logSensor := (physicalEvent,time)
+type logActuator := (actuator,deviceID,time)
+type physicalEvent := (deviceID,value_ext<not_implemented>)
+
+type event =
+| PE physicalEvent
+| ACT actuator
+
+type logEvent = | Log_PE (physicalEvent,time) | Log_Act (actuator,deviceID,time)
+
+type logEvents := _list<logEvent>
+
+type not_implemented = | NotImplemented
+
+type value =
+| Nat nat
+| Bool _bool
+| Str str
+| Unit
+| Undefined
+
+val str_of_value (v: value) : str =
+  match v with
+  | Nat n -> let s = str_of_nat n in s
+  | Bool b -> let s = str_of_bool b in s
+  | Str s -> s
+  | Unit -> _unit
+  | Undefined -> _undefined
+  end
+
+val _unit : str
+val _undefined : str
+
+val str_of_bool : _bool -> str
+
+val print_value (v: value) : () =
+  match v with
+  | Nat n -> let s = str_of_nat n in _print s
+  | Bool b -> let s = str_of_bool b in _print s
+  | Str s -> _print s
+  | Unit -> _print _unit
+  | Undefined -> _print _undefined
+  end
+
+val print_value_ext<a> (v:value_ext<a>) (f: a -> ()) : () =
+  match v with
+  | Std v -> print_value v
+  | ExtValue ev -> f ev
+  end
+
+type value_ext<a> =
+| Std value
+| ExtValue a
+
+val val_type_cast<a,b> (v:value_ext<a>) : (value_ext<b>) =
+  match v with
+  | Std v -> Std<b> v
+  | _ -> Std<b> Undefined
+  (*| ExtValue v -> Std<b> Undefined*) (*it should not happen, but it is unsafe*)
+  end
+
+
+val str_of_value_ext<a> (v:value_ext<a>) (f: a -> str) : str =
+  match v with
+  | Std v -> str_of_value v
+  | ExtValue ev -> f ev
+  end
+
+val _not_implemented : str
+
+val print_not_implemented (v : not_implemented) : () =
+  match v with
+  | NotImplemented -> _print _not_implemented
+  end
+
+val str_of_not_implemented (v : not_implemented) : str =
+  match v with
+  | NotImplemented -> _not_implemented
+  end
+
+(* expressions *)
+
+type expr<a,b> =
+| Value b
+| Var var
+| BOp (bop,expr_ext<a,b>,expr_ext<a,b>)
+| UOp (uop,expr_ext<a,b>)
+
+val str_of_expr<a,b> (e: expr<a,value_ext<b>>) (f : b -> str) (fee : a -> (b -> str) -> str) : str =
+  match e with
+  | Value v -> str_of_value_ext<b> v f
+  | Var x -> x
+  | BOp (o,e1,e2) -> let os = str_of_boperator o in
+                     let e1s = str_of_expr_ext<a,b> e1 f fee in
+                     let e2s = str_of_expr_ext<a,b> e2 f fee in
+                     str_of_bop os e1s e2s
+  | UOp (o,e) -> let os = str_of_uoperator o in
+                 let es = str_of_expr_ext<a,b> e f fee in
+                 str_of_uop os es
+  end
+
+val str_of_bop : str -> str -> str -> str
+val str_of_uop : str -> str -> str
+
+val _plus : str
+val _minus : str
+val _times : str
+val _leq : str
+val _geq : str
+val _eq : str
+val _and : str
+val _or : str
+val _xor : str
+
+val str_of_boperator (o : bop) : str =
+  match o with
+  | Add -> _plus
+  | Sub -> _minus
+  | Mul -> _times
+  | LEq -> _leq
+  | GEq -> _geq
+  | Eq -> _eq
+  | AND -> _and
+  | OR -> _or
+  | XOR -> _xor
+  end
+
+val _neg : str
+
+val str_of_uoperator (o : uop) : str =
+  match o with
+  | Neg -> _neg
+  end
+
+type expr_ext<a,b> =
+| ExtExpr a (*here dollar expressions*)
+| Expr expr<a,b>
+
+val str_of_expr_ext<a,b> (e: expr_ext<a,value_ext<b>>) (fv : b -> str) (fee : a -> (b -> str) -> str) : str =
+  match e with
+  | ExtExpr ee -> fee ee fv
+  | Expr e' -> str_of_expr<a,b> e' fv fee
+  end
+
+(* statements *)
+
+val _ass : str
+val _ret : str
+val _seq : str
+val _cond : str
+val _skip : str
+val _while : str
+
+type stmt<a,b> =
+| Ass (var, b)
+| Seq (stmt_ext<a,b>,stmt_ext<a,b>)
+| Cond (b, stmt_ext<a,b>,stmt_ext<a,b>)
+| While (b, stmt_ext<a,b>)
+| Skip
+| Ret b
+
+val str_of_assignment : str -> str -> str
+val str_of_sequence : str -> str -> str
+val str_of_cond : str -> str -> str -> str
+val str_of_while : str -> str -> str
+val str_of_ret : str -> str
+
+val str_of_stmt<a,b,c> (s:stmt<a,expr_ext<b,value_ext<c>>>)
+                       (fv : c -> str)
+                       (fee : b -> (c -> str) -> str)
+                       (fes : a -> (c -> str) -> (b -> (c -> str) -> str) -> str) : str =
+  match s with
+  | Ass (x,e) -> let e' = str_of_expr_ext<b,c> e fv fee in
+                 str_of_assignment x e'
+  | Seq (s1,s2) -> let s1' = str_of_stmt_ext<a,b,c> s1 fv fee fes in
+                   let s2' = str_of_stmt_ext<a,b,c> s2 fv fee fes in
+                   str_of_sequence s1' s2'
+  | Cond (e,s1,s2) -> let e' = str_of_expr_ext<b,c> e fv fee in
+                      let s1' = str_of_stmt_ext<a,b,c> s1 fv fee fes in
+                      let s2' = str_of_stmt_ext<a,b,c> s2 fv fee fes in
+                      str_of_cond e' s1' s2'
+  | While (e,s) -> let e' = str_of_expr_ext<b,c> e fv fee in
+                   let s' = str_of_stmt_ext<a,b,c> s fv fee fes in
+                   str_of_while e' s'
+  | Skip -> _skip
+  | Ret e -> let e' = str_of_expr_ext<b,c> e fv fee in
+             str_of_ret e'
+  end
+
+
+type stmt_ext<a,b> =
+| Pure stmt<a,b>
+| ExtSTMT a (*call, get, act*)
+
+val str_of_stmt_ext<a,b,c> (s:stmt_ext<a,expr_ext<b,value_ext<c>>>)
+                           (fv : c -> str)
+                           (fee : b -> (c -> str) -> str)
+                           (fes : a -> (c -> str) -> (b -> (c -> str) -> str) -> str) : str =
+  match s with
+  | Pure s -> str_of_stmt<a,b,c> s fv fee fes
+  | ExtSTMT es -> fes es fv fee
+  end
+
+(* computation output each small step*)
+
+type output<a,b,c> =
+| VALUE a
+| STMT (b,c)
+| ERROR
+
+val _ERROR : str
+val str_of_output_v : str -> str
+val str_of_output_s : str -> str -> str
+val str_of_output<a,b,c,d> (o : output<value_ext<c>,stmt_ext<a,expr_ext<b,value_ext<c>>>,ack<d>>)
+                           (fv : c -> str)
+                           (fee : b -> (c -> str) -> str)
+                           (fes : a -> (c -> str) -> (b -> (c -> str) -> str) -> str)
+                           (fa : d -> str): str =
+  match o with
+  | VALUE v -> let vs  = str_of_value_ext<c> v fv in
+               str_of_output_v vs
+  | STMT (s,ack) -> let sv = str_of_stmt_ext<a,b,c> s fv fee fes in
+                    let av = str_of_ack<d> ack fa in
+                    str_of_output_s sv av
+  | ERROR -> _ERROR
+  end
+
+(* communication tokens *)
+type ack<a> =
+| OK
+| EXTACK a
+
+val _OK : str
+val str_of_ack<a> (ack : ack<a>) (fa : a -> str) : str =
+  match ack with
+  | OK -> _OK
+  | EXTACK ack' -> fa ack'
+  end
+
+(*generic eval*)
+
+(*TODO*)
+
+
+(* webi params *)
+
+type identifier := nat
+type hostname := str
+
+(* lists *)
+
+type _list<_>
+
+val ladd<a> : (a,_list<a>) -> _list<a>
+val ladd_end<a> : (_list<a>,a) -> _list<a>
+val lappend<a> : (_list<a>,_list<a>) -> _list<a>
+val lrev<a> : _list<a> -> _list<a>
+val lhd<a> : _list<a> -> (a,_list<a>)
+val lpick<a> : _list<a> -> (a,_list<a>)
+val llength<a> : _list<a> -> nat
+val lempty<a> : _list<a> -> _bool
+val lmk_empty<a> : _list<a>
+val lfold_l<a,b> : (a -> b -> a) -> a -> _list<b> -> a
+val lmap<a,b> : (a -> b) -> _list<a> -> _list<b>
+val lpartition<a> : (a -> _bool) -> _list<a> -> (_list<a>,_list<a>)
+
+(* assoc lists *)
+val lassoc<a,b> : a -> _list<(a,b)> -> (b,_list<(a,b)>)
+val lassoc_opt<a,b> : a -> _list<(a,b)> -> voption<(b,_list<(a,b)>)>
+val lremove_assoc<a,b> : a -> _list<(a,b)> -> ((a,b), _list<(a,b)>)
+
+(* list of pairs *)
+val lsplit<a,b> : _list<(a,b)> -> (_list<a>,_list<b>)
+val lcombine<a,b> : _list<a> -> _list<b> -> _list<(a,b)>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

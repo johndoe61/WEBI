@@ -1,0 +1,47 @@
+    service presenceHandler :: hostA (x) :=
+      i := 0;
+      while (i <= x) {
+        get(motion,((motion_sensor,house),\"\"));
+        if (motion = 0) then
+           act(setLevel_80,(switch,house),\"\")
+        else
+           act(setLevel_0,(switch,house),\"\")
+        fi;
+        i := i + 1
+      };
+      return ~(return $x)
+
+     client 1 call (presenceHandler) := 10
+
+     service switchHandler :: hostB (x) :=
+      i := 0;
+      while (i <= x){
+        get(switch_status,((switch,house),\"\"));
+        if (switch_status = 80) then
+           act(record_video,(camera,house),\"\");
+           act(setLevel_0,(switch,house),\"\")
+        else
+           skip
+        fi;
+        i := i + 1
+      };
+      return ~(return $x)
+
+     client 2 call (switchHandler) := 10
+
+     service cameraHandler :: hostA (x) :=
+       i := 0;
+       while (i <= 10) {
+         get(status,((camera,house),\"\"));
+         if ((x = \"good\") & (status = \"video\")) then
+            act(send_media,(camera,house),\"\")
+         else
+            skip
+         fi;
+         i := i + 1
+       };
+       return ~(return $x)
+
+     bad client 3 call (cameraHandler) := \"evil\"
+
+     client 4 call (cameraHandler) := \"good\"

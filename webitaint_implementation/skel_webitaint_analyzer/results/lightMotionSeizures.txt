@@ -1,0 +1,25 @@
+Execution Summary:
+
+This execution returns ERROR!
+The tainted sink has device_id = (switch,house)
+Execution Trace =
+ServiceInit => ID : 3, URL : attack, TAINTED : yes, TIME : 0
+ServiceInit => ID : 2, URL : motionStoppedHandler, TAINTED : no, TIME : 0
+ServiceInit => ID : 1, URL : motionDetectedHandler, TAINTED : no, TIME : 0
+ServiceStep => ID : (2,2), HOST : hostA, TAINTED : no, TIME : 0
+ServiceStep => ID : (1,1), HOST : hostA, TAINTED : no, TIME : 0
+ServiceStep => ID : (1,1), HOST : hostA, TAINTED : no, TIME : 0
+ServiceStep => ID : (3,3), HOST : hostB, TAINTED : yes, TIME : 0
+ServiceStep => ID : (2,2), HOST : hostA, TAINTED : no, TIME : 0
+ServiceStep => ID : (3,3), HOST : hostB, TAINTED : yes, TIME : 0
+ServiceStep => ID : (1,1), HOST : hostA, TAINTED : no, TIME : 0
+ServiceStep => ID : (2,2), HOST : hostA, TAINTED : no, TIME : 0
+ServiceStep => ID : (3,3), HOST : hostB, TAINTED : yes, TIME : 0
+DeviceSensor => EVENT : PE motion_sensor house 0 TIME 0, TIME : 0
+DeviceReading => ID : 3, SID : 3, DEVICE_ID : (switch,house), VALUE : 0, TAINTED : yes, TIME : 1
+ServiceStep => ID : (3,3), HOST : hostB, TAINTED : yes, TIME : 1
+ServiceStep => ID : (3,3), HOST : hostB, TAINTED : yes, TIME : 1
+ServiceStep => ID : (3,3), HOST : hostB, TAINTED : yes, TIME : 1
+ServiceStep => ID : (3,3), HOST : hostB, TAINTED : yes, TIME : 1
+DeviceSensor => EVENT : PE motion_sensor house 0 TIME 1, TIME : 1
+DeviceActuatorUnsafe => EVENT : ACT setLevel_80 DEVICE_NAME : switch LOCATION house TIME 2, TAINTED : yes, TIME : 2

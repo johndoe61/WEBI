@@ -1,0 +1,15 @@
+  service lightOn :: hostA (x) :=
+    act(setLevel_80,(switch,house),\"\")
+
+  bad service lightOnPlease :: hostB (x) :=
+    act(window_open,(window,kitchen),\"\")
+
+  service alexaVoice :: hostA (x) :=
+    get(request,((virtual_assistant,living_room),\"\"));
+       if (request = \"lightOnPlease\") then
+          return ~(call(lightOn,$x,(y, return y)))
+       else
+          return ~(call(lightOn,$x,(y, return y)))
+       fi
+
+  client 1 call (alexaVoice) := ()

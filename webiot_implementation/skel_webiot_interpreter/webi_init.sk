@@ -1,0 +1,729 @@
+open wtypes
+open serverLanguage
+open clientLanguage
+open deviceLanguage
+open webi
+
+
+(* ---------------- Oven Example ---------------------*)
+(*World Oracle*)
+
+(*world oracle for the oven example*)
+val _24 : nat
+val _27 : nat
+val _X : var
+
+val wo_oven_example (w:(logEvents,_list<event>) ): (physicalEvent,time) =
+    let (l,_) = w in
+    let t' = log_time l in
+    let lr = lrev<logEvent> l in
+    let b = query_oven_kitchen_on lr in
+    match b with
+    | T -> (((thermometer,kitchen),Std<dv_val_type> (Nat _27)),t')
+    | F -> (((thermometer,kitchen),Std<dv_val_type> (Nat _24)),t')
+    end
+
+val query_oven_kitchen_on (l:logEvents) : _bool =
+  let l_empty = lempty<logEvent> l in
+  match l_empty with
+  | F ->
+    let (log,l') = lhd<logEvent> l in
+    match log with
+    | Log_PE _ -> query_oven_kitchen_on l'
+    | Log_Act (a,d,_) ->
+       let eq_id = eq_deviceID(d,(oven,kitchen)) in
+           match eq_id with
+           | T -> str_eq(oven_turn_on, a)
+           | F -> query_oven_kitchen_on l'
+           end
+    end
+  | T -> F
+  end
+
+
+(*devices*)
+
+(*Locations*)
+val kitchen : deviceLocation
+
+
+(*Devices*)
+val oven : deviceName
+val thermometer : deviceName
+val window : deviceName
+
+(*Actions*)
+
+val oven_turn_on : actuator
+val oven_turn_off : actuator
+val window_open : actuator
+val window_close : actuator
+
+(*state variables*)
+val oven_status : str
+val temp : str
+val window_status : str
+
+(*oven*)
+val oven_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VSome<deviceMemory -> (dv_val,deviceMemory)> (λ mu_d:deviceMemory -> dv_mem_get oven_status mu_d)
+val oven_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> = VSome<deviceMemory -> actuator -> ((),deviceMemory)>
+    (λ mu_d:deviceMemory ->
+            λ a:actuator ->
+                let b = str_eq(a,oven_turn_on) in
+                match b with
+                | T -> dv_mem_set oven_status (Std<dv_val_type> (Bool T)) mu_d
+                | F -> dv_mem_set oven_status (Std<dv_val_type> (Bool F)) mu_d
+                end)
+val oven_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VNone<deviceMemory -> dv_val -> ((),deviceMemory)>
+
+val mk_oven (_ : ()) : dv_step = mk_device oven oven_get oven_act oven_sens
+
+(*thermometer*)
+val thermometer_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VSome<deviceMemory -> (dv_val,deviceMemory)> (λ mu_d:deviceMemory -> dv_mem_get temp mu_d)
+val thermometer_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> =
+  VNone<deviceMemory -> actuator -> ((),deviceMemory)>
+val thermometer_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VSome<deviceMemory -> dv_val -> ((),deviceMemory)> (λ mu_d:deviceMemory -> λ v:dv_val -> dv_mem_set temp v mu_d)
+
+val mk_thermometer (_ : ()) : dv_step = mk_device thermometer thermometer_get thermometer_act thermometer_sens
+
+
+(*window*)
+val window_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VSome<deviceMemory -> (dv_val,deviceMemory)> (λ mu_d:deviceMemory -> dv_mem_get window_status mu_d)
+val window_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> = VSome<deviceMemory -> actuator -> ((),deviceMemory)>
+    (λ mu_d:deviceMemory ->
+            λ a:actuator ->
+                let b = str_eq(a,window_open) in
+                match b with
+                | T -> dv_mem_set window_status (Std<dv_val_type> (Bool T)) mu_d
+                | F -> dv_mem_set window_status (Std<dv_val_type> (Bool F)) mu_d
+                end)
+val window_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VNone<deviceMemory -> dv_val -> ((),deviceMemory)>
+
+val mk_window (_ : ()) : dv_step = mk_device window window_get window_act window_sens
+val window_init_memory (_ : ()) : deviceMemory =
+  let mu_w = init_state<dv_val> () in
+  let (_,mu_w') = st_write<dv_val> window_status (Std<dv_val_type> (Bool F)) mu_w in
+  mu_w'
+
+val thermometer_init_memory (_ : ()) : deviceMemory =
+  let mu_w = init_state<dv_val> () in
+  let (_,mu_w') = st_write<dv_val> temp (Std<dv_val_type> (Nat _24)) mu_w in
+  mu_w'
+
+val oven_init_memory (_ : ()) : deviceMemory =
+  let mu_w = init_state<dv_val> () in
+  let (_,mu_w') = st_write<dv_val> oven_status (Std<dv_val_type> (Bool F)) mu_w in
+  mu_w'
+
+
+val ic_eval_oven (_IC_:deviceConfigurations) (i:dv_stmt) : (deviceConfigurations,voption<dv_val>) =
+  let window_step = mk_window () in
+  let thermometer_step = mk_thermometer () in
+  let oven_step = mk_oven () in
+  let steps = ladd<dv_step>(window_step,lmk_empty<dv_step>) in
+  let steps = ladd<dv_step>(thermometer_step,steps) in
+  let steps = ladd<dv_step>(oven_step,steps) in
+  ic_eval steps _IC_ i
+
+val mk_device_instance
+      (name : deviceName)
+      (mem_init : () -> deviceMemory)
+      (l : deviceLocation)
+      (rs : deviceReactions)
+      (as : actions)
+      (ps : permissions) : deviceConfiguration =
+    let mu_d = mem_init () in
+    mk_deviceConfiguration mu_d rs as ps (name,l)
+
+val mk_oven_kitchen (_:()) : deviceConfiguration =
+  let _A_ = ladd<actuator>(oven_turn_on,lmk_empty<actuator>) in
+  let _A_' = ladd<actuator>(oven_turn_off,_A_) in
+  mk_device_instance oven oven_init_memory kitchen lmk_empty<reaction> _A_' lmk_empty<permission> 
+
+val mk_thermometer_kitchen (_:()) : deviceConfiguration =
+  mk_device_instance thermometer thermometer_init_memory kitchen lmk_empty<reaction> lmk_empty<actuator> lmk_empty<permission> 
+
+val mk_window_kitchen (_:()) : deviceConfiguration =
+  let _A_ = ladd<actuator>(window_open,lmk_empty<actuator>) in
+  let _A_' = ladd<actuator>(window_close,_A_) in
+  mk_device_instance window window_init_memory kitchen lmk_empty<reaction> _A_' lmk_empty<permission> 
+
+
+
+
+(* --------------- Seizure Example -------------------*)
+
+(*motion_sensor*)
+
+
+val motion_sensor : deviceName
+val house : deviceLocation
+
+val mk_motion_sensor_house (_:()) : deviceConfiguration =
+  mk_device_instance motion_sensor motion_sensor_init_memory house lmk_empty<reaction> lmk_empty<actuator> lmk_empty<permission> 
+
+val motion_status : var
+
+val motion_sensor_init_memory (_ : ()) : deviceMemory =
+  let mu_w = init_state<dv_val> () in
+  let (_,mu_w') = (st_write<dv_val> motion_status (Std<dv_val_type> (Nat _0)) mu_w) in
+  mu_w'
+
+val motion_sensor_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VSome<deviceMemory -> (dv_val,deviceMemory)> (λ mu_d:deviceMemory -> dv_mem_get motion_status mu_d)
+val motion_sensor_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> =
+  VNone<deviceMemory -> actuator -> ((),deviceMemory)>
+val motion_sensor_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VSome<deviceMemory -> dv_val -> ((),deviceMemory)> (λ mu_d:deviceMemory -> λ v:dv_val -> dv_mem_set motion_status v mu_d)
+
+val mk_motion_sensor (_ : ()) : dv_step = mk_device motion_sensor motion_sensor_get motion_sensor_act motion_sensor_sens
+
+
+(*switch*)
+
+val switch : deviceName
+val setLevel_80 : actuator
+val setLevel_0 : actuator
+val setLevel_signalPattern : actuator
+val _no_one_home : str
+
+val mk_switch_house (_:()) : deviceConfiguration =
+  let _A_ = ladd<actuator>(setLevel_0,lmk_empty<actuator>) in
+  let _A_' = ladd<actuator>(setLevel_80,_A_) in
+  mk_device_instance switch switch_init_memory house lmk_empty<reaction> _A_' lmk_empty<permission> 
+
+val switch_status : var
+
+val _80 : nat
+val _0 : nat
+val _1 : nat
+
+val switch_init_memory (_ : ()) : deviceMemory =
+  let mu_w = init_state<dv_val> () in
+  let (_,mu_w') = (st_write<dv_val> switch_status (Std<dv_val_type> (Nat _0)) mu_w) in
+  mu_w'
+
+val switch_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VSome<deviceMemory -> (dv_val,deviceMemory)> (λ mu_d:deviceMemory -> dv_mem_get switch_status mu_d)
+val switch_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> = VSome<deviceMemory -> actuator -> ((),deviceMemory)>
+    (λ mu_d:deviceMemory ->
+            λ a:actuator ->
+                let b = str_eq(a,setLevel_0) in
+                match b with
+                | T -> dv_mem_set switch_status (Std<dv_val_type> (Nat _0)) mu_d
+                | F -> let b = str_eq(a,setLevel_80) in
+                       match b with
+                       | T -> dv_mem_set switch_status (Std<dv_val_type> (Nat _80)) mu_d
+                       | F -> dv_mem_set switch_status (Std<dv_val_type> (Str _no_one_home)) mu_d
+                       end
+                end)
+val switch_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VNone<deviceMemory -> dv_val -> ((),deviceMemory)>
+
+val mk_switch (_ : ()) : dv_step = mk_device switch switch_get switch_act switch_sens
+
+
+val ic_eval_seizures (_IC_:deviceConfigurations) (i:dv_stmt) : (deviceConfigurations,voption<dv_val>) =
+  let switch_step = mk_switch () in
+  let motion_sensor_step = mk_motion_sensor () in
+  let steps = ladd<dv_step>(switch_step,lmk_empty<dv_step>) in
+  let steps = ladd<dv_step>(motion_sensor_step,steps) in
+  ic_eval steps _IC_ i
+
+val wo_seizures (w:(logEvents,_list<event>) ): (physicalEvent,time) =
+  let (l,_) = w in
+  let t' = log_time l in
+  branch (((motion_sensor,house),Std<dv_val_type> (Nat _0)),t')
+  or     (((motion_sensor,house),Std<dv_val_type> (Nat _0)),t')
+  or     (((motion_sensor,house),Std<dv_val_type> (Nat _0)),t')
+  or     (((motion_sensor,house),Std<dv_val_type> (Nat _1)),t')
+  or     (((motion_sensor,house),Std<dv_val_type> (Nat _1)),t')
+  end
+
+
+(*----------- smoke example ---------------*)
+
+(*smoke_sensor*)
+
+
+val smoke_sensor : deviceName
+
+val mk_smoke_sensor_house (_:()) : deviceConfiguration =
+  mk_device_instance smoke_sensor smoke_sensor_init_memory house lmk_empty<reaction> lmk_empty<actuator> lmk_empty<permission> 
+
+val smoke_status : var
+
+val smoke_sensor_init_memory (_ : ()) : deviceMemory =
+  let mu_w = init_state<dv_val> () in
+  let (_,mu_w') = st_write<dv_val> smoke_status (Std<dv_val_type> (Nat _0)) mu_w in
+  mu_w'
+
+val smoke_sensor_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VSome<deviceMemory -> (dv_val,deviceMemory)> (λ mu_d:deviceMemory -> dv_mem_get smoke_status mu_d)
+val smoke_sensor_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> =
+  VNone<deviceMemory -> actuator -> ((),deviceMemory)>
+val smoke_sensor_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VSome<deviceMemory -> dv_val -> ((),deviceMemory)> (λ mu_d:deviceMemory -> λ v:dv_val -> dv_mem_set smoke_status v mu_d)
+
+val mk_smoke_sensor (_ : ()) : dv_step = mk_device smoke_sensor smoke_sensor_get smoke_sensor_act smoke_sensor_sens
+
+
+(*alarm*)
+val alarm_status : var
+val alarm : deviceName
+val strobe : actuator
+val stop : actuator
+
+val alarm_init_memory (_ : ()) : deviceMemory =
+  let mu_w = init_state<dv_val> () in
+  let (_,mu_w') = st_write<dv_val> alarm_status (Std<dv_val_type> (Nat _0)) mu_w in
+  mu_w'
+
+val alarm_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VSome<deviceMemory -> (dv_val,deviceMemory)> (λ mu_d:deviceMemory -> dv_mem_get alarm_status mu_d)
+val alarm_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> = VSome<deviceMemory -> actuator -> ((),deviceMemory)>
+    (λ mu_d:deviceMemory ->
+            λ a:actuator ->
+                let b = str_eq(a,strobe) in
+                match b with
+                | T -> dv_mem_set alarm_status (Std<dv_val_type> (Nat _1)) mu_d
+                | F -> dv_mem_set alarm_status (Std<dv_val_type> (Nat _0)) mu_d
+                end)
+val alarm_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VNone<deviceMemory -> dv_val -> ((),deviceMemory)>
+
+val mk_alarm (_ : ()) : dv_step = mk_device alarm alarm_get alarm_act alarm_sens
+
+val mk_alarm_house (_:()) : deviceConfiguration =
+  let _A_ = ladd<actuator>(strobe,lmk_empty<actuator>) in
+  let _A_' = ladd<actuator>(stop,_A_) in
+  mk_device_instance alarm alarm_init_memory house lmk_empty<reaction> _A_' lmk_empty<permission> 
+
+
+(*phone*)
+val phone_status : var
+
+val phone_init_memory (_ : ()) : deviceMemory =
+  let mu_w = init_state<dv_val> () in
+  let (_,mu_w') = st_write<dv_val> phone_status (Std<dv_val_type> (Str _not_calling)) mu_w in
+  mu_w'
+
+val _calling : str
+val _not_calling : str
+val _call : actuator
+val _hang : actuator
+val phone : deviceName
+
+val phone_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VNone<deviceMemory -> (dv_val,deviceMemory)>
+val phone_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> = VSome<deviceMemory -> actuator -> ((),deviceMemory)>
+    (λ mu_d:deviceMemory ->
+            λ a:actuator ->
+                let b = str_eq(a,_call) in
+                match b with
+                | T -> dv_mem_set alarm_status (Std<dv_val_type> (Str _calling)) mu_d
+                | F -> dv_mem_set alarm_status (Std<dv_val_type> (Str _not_calling)) mu_d
+                end)
+val phone_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VNone<deviceMemory -> dv_val -> ((),deviceMemory)>
+
+val mk_phone (_ : ()) : dv_step = mk_device phone phone_get phone_act phone_sens
+
+val mk_phone_house (_:()) : deviceConfiguration =
+  let _A_ = ladd<actuator>(_call,lmk_empty<actuator>) in
+  let _A_' = ladd<actuator>(_hang,_A_) in
+  mk_device_instance phone phone_init_memory house lmk_empty<reaction> _A_' lmk_empty<permission> 
+
+
+
+val ic_eval_smoke (_IC_:deviceConfigurations) (i:dv_stmt) : (deviceConfigurations,voption<dv_val>) =
+  let smoke_step = mk_smoke_sensor () in
+  let alarm_step = mk_alarm () in
+  let phone_step = mk_phone () in
+  let steps = ladd<dv_step>(smoke_step,lmk_empty<dv_step>) in
+  let steps = ladd<dv_step>(alarm_step,steps) in
+  let steps = ladd<dv_step>(phone_step,steps) in
+  ic_eval steps _IC_ i
+
+val wo_smoke (w:(logEvents,_list<event>) ) : (physicalEvent,time) =
+  let (l,_) = w in
+  let t' = log_time l in
+  branch (((smoke_sensor,house),Std<dv_val_type> (Nat _0)),t')
+  or     (((smoke_sensor,house),Std<dv_val_type> (Nat _1)),t')
+  or     (((smoke_sensor,house),Std<dv_val_type> (Nat _0)),t')
+  or     (((smoke_sensor,house),Std<dv_val_type> (Nat _0)),t')
+  or     (((smoke_sensor,house),Std<dv_val_type> (Nat _0)),t')
+  or     (((smoke_sensor,house),Std<dv_val_type> (Nat _0)),t')
+  or     (((smoke_sensor,house),Std<dv_val_type> (Nat _0)),t')
+  end
+
+
+(*camera example*)
+
+val camera_status : var
+val camera : deviceName
+
+val camera_init_memory (_ : ()) : deviceMemory =
+  let mu_w = init_state<dv_val> () in
+  let (_,mu_w') = st_write<dv_val> camera_status (Std<dv_val_type> (Str _empty)) mu_w in
+  mu_w'
+
+val _video : str
+val _photo : str
+val _sending_media : str
+val _empty : str
+val record_video : actuator
+val take_photo : actuator
+val send_media : actuator
+
+val camera_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VSome<deviceMemory -> (dv_val,deviceMemory)> (λ mu_d:deviceMemory -> dv_mem_get camera_status mu_d)
+val camera_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> = VSome<deviceMemory -> actuator -> ((),deviceMemory)>
+    (λ mu_d:deviceMemory ->
+            λ a:actuator ->
+                let b = str_eq(a,record_video) in
+                match b with
+                | T -> dv_mem_set camera_status (Std<dv_val_type> (Str _video)) mu_d
+                | F -> let b = str_eq(a,take_photo) in
+                       match b with
+                       | T -> dv_mem_set camera_status (Std<dv_val_type> (Str _photo)) mu_d
+                       | F -> dv_mem_set camera_status (Std<dv_val_type> (Str _empty)) mu_d
+                       end
+                end)
+val camera_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VNone<deviceMemory -> dv_val -> ((),deviceMemory)>
+
+val mk_camera (_ : ()) : dv_step = mk_device camera camera_get camera_act camera_sens
+
+val mk_camera_house (_:()) : deviceConfiguration =
+  let _A_ = ladd<actuator>(record_video,lmk_empty<actuator>) in
+  let _A_ = ladd<actuator>(take_photo,_A_) in
+  let _A_ = ladd<actuator>(send_media,_A_) in
+  mk_device_instance camera camera_init_memory house lmk_empty<reaction> _A_ lmk_empty<permission> 
+
+val ic_eval_camera (_IC_:deviceConfigurations) (i:dv_stmt) : (deviceConfigurations,voption<dv_val>) =
+  let camera_step = mk_camera () in
+  let switch_step = mk_switch () in
+  let motion_step = mk_motion_sensor () in
+  let steps = ladd<dv_step>(camera_step,lmk_empty<dv_step>) in
+  let steps = ladd<dv_step>(switch_step,steps) in
+  let steps = ladd<dv_step>(motion_step,steps) in
+  ic_eval steps _IC_ i
+
+(* florida waterplant *)
+
+(*sodium dispenser*)
+
+val dispenser_status : var
+val waterplant : deviceLocation
+val sodium_dispenser : deviceName
+val add_sodium : actuator
+val replenish_sodium : actuator
+
+val sodium_dispenser_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VSome<deviceMemory -> (dv_val,deviceMemory)> (λ mu_d : deviceMemory -> dv_mem_get dispenser_status mu_d)
+val sodium_dispenser_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> = VSome<deviceMemory -> actuator -> ((),deviceMemory)>
+    (λ mu_d:deviceMemory ->
+            λ a:actuator ->
+                let b = str_eq(a,add_sodium) in
+                match b with
+                | T -> let (Std (Nat status),_) = dv_mem_get dispenser_status mu_d in
+                       let n = sub(status,_6) in
+                       dv_mem_set dispenser_status (Std<dv_val_type> (Nat n)) mu_d
+                | F -> dv_mem_set dispenser_status (Std<dv_val_type> (Nat _100)) mu_d
+                end)
+
+val sodium_dispenser_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VNone<deviceMemory -> dv_val -> ((),deviceMemory)>
+
+val _100 : nat
+
+val mk_sodium_dispenser (_ : ()) : dv_step = mk_device sodium_dispenser sodium_dispenser_get sodium_dispenser_act sodium_dispenser_sens
+val sodium_dispenser_init_memory (_ : ()) : deviceMemory =
+  let mu_w = init_state<dv_val> () in
+  let (_,mu_w') = st_write<dv_val> dispenser_status (Std<dv_val_type> (Nat _100)) mu_w in
+  mu_w'
+
+val mk_sodium_dispenser_waterplant (_:()) : deviceConfiguration =
+  let _A_ = ladd<actuator> (add_sodium,lmk_empty<actuator>) in
+  let _A_ = ladd<actuator> (replenish_sodium,_A_) in
+  mk_device_instance sodium_dispenser sodium_dispenser_init_memory waterplant lmk_empty<reaction> _A_ lmk_empty<permission> 
+
+
+(*sodium sensor*)
+val sodium_sensor_status : var
+val valve_location : deviceLocation
+val sodium_sensor : deviceName
+
+
+val sodium_sensor_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VSome<deviceMemory -> (dv_val,deviceMemory)> (λ mu_d:deviceMemory -> dv_mem_get sodium_sensor_status mu_d)
+val sodium_sensor_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> =
+  VNone<deviceMemory -> actuator -> ((),deviceMemory)>
+val sodium_sensor_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VSome<deviceMemory -> dv_val -> ((),deviceMemory)> (λ mu_d:deviceMemory -> λ v:dv_val -> dv_mem_set sodium_sensor_status v mu_d)
+
+val mk_sodium_sensor (_ : ()) : dv_step = mk_device sodium_sensor sodium_sensor_get sodium_sensor_act sodium_sensor_sens
+
+val sodium_sensor_init_memory (_ : ()) : deviceMemory =
+  let mu_w = init_state<dv_val> () in
+  let (_,mu_w') = st_write<dv_val> sodium_sensor_status (Std<dv_val_type> (Nat _0)) mu_w in
+  mu_w'
+
+val mk_sodium_sensor_waterplant (_:()) : deviceConfiguration =
+  mk_device_instance sodium_sensor sodium_sensor_init_memory waterplant lmk_empty<reaction> lmk_empty<actuator> lmk_empty<permission> 
+
+
+val mk_sodium_sensor_valve (_:()) : deviceConfiguration =
+  mk_device_instance sodium_sensor sodium_sensor_init_memory valve_location lmk_empty<reaction> lmk_empty<actuator> lmk_empty<permission> 
+
+(*alarm waterplant*)
+
+val mk_alarm_waterplant (_:()) : deviceConfiguration =
+  let _A_ = ladd<actuator>(strobe,lmk_empty<actuator>) in
+  let _A_' = ladd<actuator>(stop,_A_) in
+  mk_device_instance alarm alarm_init_memory waterplant lmk_empty<reaction> _A_' lmk_empty<permission> 
+
+(*valve waterplant*)
+val valve : deviceName
+val valve_status : var
+val valve_open : actuator
+val valve_close : actuator
+
+val valve_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VSome<deviceMemory -> (dv_val,deviceMemory)> (λ mu_d:deviceMemory -> dv_mem_get valve_status mu_d)
+val valve_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> = VSome<deviceMemory -> actuator -> ((),deviceMemory)>
+    (λ mu_d:deviceMemory ->
+            λ a:actuator ->
+                let b = str_eq(a,valve_open) in
+                match b with
+                | T -> dv_mem_set valve_status (Std<dv_val_type> (Bool T)) mu_d
+                | F -> dv_mem_set valve_status (Std<dv_val_type> (Bool F)) mu_d
+                end)
+val valve_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VNone<deviceMemory -> dv_val -> ((),deviceMemory)>
+
+val mk_valve (_ : ()) : dv_step = mk_device valve valve_get valve_act valve_sens
+val valve_init_memory (_ : ()) : deviceMemory =
+  let mu_w = init_state<dv_val> () in
+  let (_,mu_w') = st_write<dv_val> valve_status (Std<dv_val_type> (Bool F)) mu_w in
+  mu_w'
+
+val mk_valve_waterplant (_:()) : deviceConfiguration =
+  let _A_ = ladd<actuator>(valve_open,lmk_empty<actuator>) in
+  let _A_' = ladd<actuator>(valve_close,_A_) in
+  mk_device_instance valve valve_init_memory waterplant lmk_empty<reaction> _A_' lmk_empty<permission> 
+
+val ic_eval_waterplant (_IC_:deviceConfigurations) (i:dv_stmt) : (deviceConfigurations,voption<dv_val>) =
+  let valve_step = mk_valve () in
+  let sodium_dispenser_step = mk_sodium_dispenser () in
+  let sodium_sensor_step = mk_sodium_sensor () in
+  let alarm_step = mk_alarm () in
+  let steps = ladd<dv_step>(sodium_sensor_step,lmk_empty<dv_step>) in
+  let steps = ladd<dv_step>(sodium_dispenser_step,steps) in
+  let steps = ladd<dv_step>(valve_step,steps) in
+  let steps = ladd<dv_step>(alarm_step,steps) in
+  ic_eval steps _IC_ i
+
+val _6 : nat
+
+val wo_florida_waterplant (w:(logEvents,_list<event>) ): (physicalEvent,time) =
+  let (l,_) = w in
+  let t' = log_time l in
+  branch (((sodium_sensor,waterplant),Std<dv_val_type> (Nat _6)),t')
+  or     (((sodium_sensor,valve),Std<dv_val_type> (Nat _4)),t')
+  end
+
+(*world oracle to be changed. We need to increase by 5 the default value of the sodium sensor of the waterplant. once we do that then we increase slowly the
+value of the sodium sensor of the valve. This is impossible to make secure if not by using the host memory.*)
+
+
+val _4 : nat
+
+(* virtual assistant *)
+
+val virtual_assistant : deviceName
+val living_room : deviceLocation
+val lightOnPlease : str
+val lightOn : str
+val command : var
+val empty_str : str
+
+val virtual_assistant_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VSome<deviceMemory -> (dv_val,deviceMemory)> (λ mu_d:deviceMemory -> dv_mem_get command mu_d)
+val virtual_assistant_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> =
+  VNone<deviceMemory -> actuator -> ((),deviceMemory)>
+val virtual_assistant_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VSome<deviceMemory -> dv_val -> ((),deviceMemory)> (λ mu_d:deviceMemory -> λ v:dv_val -> dv_mem_set command v mu_d)
+
+val mk_virtual_assistant (_ : ()) : dv_step = mk_device virtual_assistant virtual_assistant_get virtual_assistant_act virtual_assistant_sens
+
+val virtual_assistant_init_memory (_ : ()) : deviceMemory =
+  let mu_w = init_state<dv_val> () in
+  let (_,mu_w') = st_write<dv_val> command (Std<dv_val_type> (Str empty_str)) mu_w in
+  mu_w'
+
+val mk_virtual_assistant_living_room (_:()) : deviceConfiguration =
+  mk_device_instance virtual_assistant virtual_assistant_init_memory living_room lmk_empty<reaction> lmk_empty<actuator> lmk_empty<permission> 
+
+val ic_eval_virtual_assistant (_IC_:deviceConfigurations) (i:dv_stmt) : (deviceConfigurations,voption<dv_val>) =
+  let virtual_assistant_step = mk_virtual_assistant () in
+  let window_step = mk_window () in
+  let switch_step = mk_switch () in
+  let steps = ladd<dv_step>(virtual_assistant_step,lmk_empty<dv_step>) in
+  let steps = ladd<dv_step>(window_step,steps) in
+  let steps = ladd<dv_step>(switch_step,steps) in
+  ic_eval steps _IC_ i
+
+val wo_virtual_assistant (w:(logEvents,_list<event>) ): (physicalEvent,time) =
+  let (l,_) = w in
+  let t' = log_time l in
+  branch (((virtual_assistant,living_room),Std<dv_val_type> (Str lightOnPlease)),t')
+  or     (((virtual_assistant,living_room),Std<dv_val_type> (Str lightOn)),t')
+  end
+
+(*smoke alarm example*)
+
+val mk_valve_house (_:()) : deviceConfiguration =
+  let _A_ = ladd<actuator>(valve_open,lmk_empty<actuator>) in
+  let _A_' = ladd<actuator>(valve_close,_A_) in
+  mk_device_instance valve valve_init_memory house lmk_empty<reaction> _A_' lmk_empty<permission> 
+
+(*moisture_sensor*)
+val moisture_sensor : deviceName
+val moisture : var
+
+val moisture_sensor_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VSome<deviceMemory -> (dv_val,deviceMemory)> (λ mu_d:deviceMemory -> dv_mem_get moisture mu_d)
+val moisture_sensor_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> =
+  VNone<deviceMemory -> actuator -> ((),deviceMemory)>
+val moisture_sensor_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VSome<deviceMemory -> dv_val -> ((),deviceMemory)> (λ mu_d:deviceMemory -> λ v:dv_val -> dv_mem_set moisture v mu_d)
+
+val mk_moisture_sensor (_ : ()) : dv_step = mk_device moisture_sensor moisture_sensor_get moisture_sensor_act moisture_sensor_sens
+
+val moisture_sensor_init_memory (_ : ()) : deviceMemory =
+  let mu_w = init_state<dv_val> () in
+  let (_,mu_w') = st_write<dv_val> moisture (Std<dv_val_type> (Bool F)) mu_w in
+  mu_w'
+
+val mk_moisture_sensor_house (_:()) : deviceConfiguration =
+  mk_device_instance moisture_sensor moisture_sensor_init_memory house lmk_empty<reaction> lmk_empty<actuator> lmk_empty<permission> 
+
+(*sprinkler*)
+val sprinkler : deviceName
+val sprinkler_status : var
+val sprinkler_open : actuator
+val sprinkler_close : actuator
+val sprinkler_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VSome<deviceMemory -> (dv_val,deviceMemory)> (λ mu_d:deviceMemory -> dv_mem_get sprinkler_status mu_d)
+val sprinkler_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> = VSome<deviceMemory -> actuator -> ((),deviceMemory)>
+    (λ mu_d:deviceMemory ->
+            λ a:actuator ->
+                let b = str_eq(a,sprinkler_open) in
+                match b with
+                | T -> dv_mem_set sprinkler_status (Std<dv_val_type> (Bool T)) mu_d
+                | F -> dv_mem_set sprinkler_status (Std<dv_val_type> (Bool F)) mu_d
+                end)
+val sprinkler_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VNone<deviceMemory -> dv_val -> ((),deviceMemory)>
+
+val mk_sprinkler (_ : ()) : dv_step = mk_device sprinkler sprinkler_get sprinkler_act sprinkler_sens
+val sprinkler_init_memory (_ : ()) : deviceMemory =
+  let mu_w = init_state<dv_val> () in
+  let (_,mu_w') = st_write<dv_val> sprinkler_status (Std<dv_val_type> (Bool F)) mu_w in
+  mu_w'
+
+val mk_sprinkler_house (_:()) : deviceConfiguration =
+  let _A_ = ladd<actuator>(sprinkler_open,lmk_empty<actuator>) in
+  let _A_' = ladd<actuator>(sprinkler_close,_A_) in
+  mk_device_instance sprinkler sprinkler_init_memory house lmk_empty<reaction> _A_' lmk_empty<permission> 
+
+
+(*moisture*)
+
+val ic_eval_smoke_moisture (_IC_:deviceConfigurations) (i:dv_stmt) : (deviceConfigurations,voption<dv_val>) =
+  let moisture_step = mk_moisture_sensor () in
+  let valve_step = mk_valve () in
+  let sprinkler_step = mk_sprinkler () in
+  let alarm_step = mk_alarm () in
+  let smoke_step = mk_smoke_sensor () in
+  let steps = ladd<dv_step>(moisture_step,lmk_empty<dv_step>) in
+  let steps = ladd<dv_step>(valve_step,steps) in
+  let steps = ladd<dv_step>(sprinkler_step,steps) in
+  let steps = ladd<dv_step>(alarm_step,steps) in
+  let steps = ladd<dv_step>(smoke_step,steps) in
+  ic_eval steps _IC_ i
+
+
+val wo_smoke_moisture (w:(logEvents,_list<event>) ): (physicalEvent,time) =
+  let (l,_) = w in
+  let t' = log_time l in
+  let l_e = lempty<logEvent> l in
+  match l_e with
+  | T -> (((smoke_sensor,house),Std<dv_val_type> (Nat _1)),t')
+  | F -> let b = has_sprinkler_open l in
+         match b with
+         | T -> (((moisture_sensor,house),Std<dv_val_type> (Bool T)),t')
+         | F -> (((smoke_sensor,house),Std<dv_val_type> (Nat _1)),t')
+         end
+  end
+
+val has_sprinkler_open (l:_list<logEvent>) : _bool =
+    let l_e = lempty<logEvent> l in
+    match l_e with
+    | T -> F
+    | F -> let l_r = lrev<logEvent> l in
+           let (h,l_r') = lhd<logEvent> l_r in
+           let b = is_sprinkler_open h in
+           match b with
+           | T -> T
+           | F -> let l' = lrev<logEvent> l_r' in
+                  has_sprinkler_open l'
+           end
+    end
+
+val is_sprinkler_open (e : logEvent) : _bool =
+    match e with
+    | Log_PE _ -> F
+    | Log_Act (a,id,_) -> (let b = eq_deviceID(id,(sprinkler,house)) in
+                                 match b with
+                                 | F -> F
+                                 | T -> str_eq(sprinkler_open,a)
+                                 end)
+    end
+
+(*smart toy example*)
+(*
+val smart_toy : deviceLocation
+val microphone : deviceName
+val microphone_status : var
+val record_audio : actuator
+
+val microphone_get : voption<deviceMemory -> (dv_val,deviceMemory)> =
+  VSome<deviceMemory -> (dv_val,deviceMemory)> (λ mu_d:deviceMemory -> dv_mem_get microphone_status mu_d)
+val microphone_act : voption<deviceMemory -> actuator -> ((),deviceMemory)> = VSome<deviceMemory -> actuator -> ((),deviceMemory)>
+    (λ mu_d:deviceMemory ->
+            λ a:actuator ->
+                let b = str_eq(a,record_audio) in
+                match b with
+                | T -> dv_mem_set microphone_status (Std<dv_val_type> (Str _audio)) mu_d
+                | F -> ((),mu_d)
+                end)
+val microphone_sens : voption<deviceMemory -> dv_val -> ((),deviceMemory)> =
+  VNone<deviceMemory -> dv_val -> ((),deviceMemory)>
+
+val mk_microphone (_ : ()) : dv_step = mk_device microphone microphone_get microphone_act microphone_sens
+
+val mk_microphone_smart_toy (_:()) : deviceConfiguration =
+  let _A_ = ladd<actuator>(record_audio,lmk_empty<actuator>) in
+  mk_device_instance microphone microphone_init_memory smart_toy lmk_empty<reaction> _A_ lmk_empty<permission> 
+
+*)
+

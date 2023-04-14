@@ -1,0 +1,25 @@
+service oven_controller :: hostA ( x ) :=
+  return ~(call(turn_on_oven,$x, (z, return z)))
+
+bad client 1 call (oven_controller) := ()
+
+service turn_on_oven :: hostB ( x ) :=
+  act(oven_turn_on, (oven,kitchen), \"\");
+  get(tmp,((oven,kitchen),\"\"));
+  return tmp
+
+client 2 call (window_controller) := 3
+
+service window_controller :: hostA ( x ) :=
+  i := 0;
+  while (i <= x) {
+    get(tmp,((thermometer,kitchen),\"\"));
+    if (tmp >= 25) then
+      act(window_open,(window,kitchen),\"\")
+    else
+      skip
+    fi;
+    i := i + 1
+   };
+   get(tmp,((oven,kitchen),\"\"));
+   return ~(return $tmp)

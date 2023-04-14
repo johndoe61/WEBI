@@ -1,0 +1,138 @@
+open wtypes
+
+val cl_bind<a,b> (w: st<cl_val,a>) (f : a -> st<cl_val,b>) : st<cl_val,b> = st_bind<cl_val,a,b> w f
+binder @ := cl_bind
+
+val cl_read : st_read_t<cl_val> = st_read<cl_val>
+val cl_write : st_write_t<cl_val> = st_write<cl_val>
+
+val cl_m_read<a> ((x,r_f) : (var,st_read_t<cl_val>)) (f : cl_val → st<cl_val,a>): st<cl_val,a> =
+  st_m_read<cl_val,a> (x,r_f) f
+
+val cl_m_write<a> ((x,v,w_f):(var,cl_val,st_write_t<cl_val>) ) (f: () → st<cl_val,a>) : st<cl_val,a> =
+  st_m_write<cl_val,(),a> (x,v,w_f) f
+
+binder /r := cl_m_read
+binder /w := cl_m_write
+
+val cl_ret<a> (v:a) : st<cl_val,a> = st_ret<cl_val,a> v
+
+
+val eval_cl_expr (ex:cl_expr): st<cl_val,cl_val> =
+  match ex with
+  | ExtExpr _ -> cl_ret<cl_val> (ExtValue<cl_val_type> NotImplemented)
+  | Expr e ->
+     match e with
+     | Value v -> cl_ret<cl_val> v
+     | Var x -> let v =/r (x,cl_read) in
+                cl_ret<cl_val> v
+     | BOp (o,e1,e2) -> let Std v1 =@ eval_cl_expr e1 in
+                        let Std v2 =@ eval_cl_expr e2 in
+                        let v = eval_bop (o,v1,v2) in
+                        cl_ret<cl_val> (Std<cl_val_type> v)
+     | UOp (o,e) -> let Std v =@ eval_cl_expr e in
+                    let v' = eval_uop (o,v) in
+                    cl_ret<cl_val> (Std<cl_val_type> v')
+     end
+  end
+
+type cl_language := stmt_ext<cl_stmt,cl_expr>
+type cl_stmt = | Call (url,cl_val,(var, stmt_ext<cl_stmt,cl_expr>))
+
+type cl_ack = | Notify (url,cl_val,(var, cl_language))
+type cl_output := output<cl_val,cl_language,cl_not>
+
+val cl_ret_o (o: cl_output) : st<cl_val,cl_output> = cl_ret<cl_output> o
+
+type cl_expr := expr_ext<cl_val_type,cl_val>
+type cl_val_type := not_implemented
+type cl_val := value_ext<cl_val_type>
+type cl_not := ack<cl_ack>
+
+val str_of_cl_expr (e : cl_expr) : str =
+  str_of_expr_ext<cl_val_type,cl_val_type> e
+                                           str_of_not_implemented
+                                           (λ e' : cl_val_type ->
+                                                   λ _: (cl_val_type -> str) ->
+                                                        str_of_not_implemented e')
+
+val eval_cl_step (s: cl_language): st<cl_val,cl_output> =
+  match s with
+  | Pure s' -> (*this part might be put in the types file. you can do a polymorphic evaluator that has as an extra parameter the expressions evaluatot*)
+     match s' with
+     | Ret e -> let v =@ eval_cl_expr e in
+                cl_ret_o (VALUE<cl_val,cl_language,cl_not> v)
+     | Ass (x,e) -> let v =@ eval_cl_expr e in
+                    (x,v,cl_write);/w
+                    cl_ret_o (VALUE<cl_val,cl_language,cl_not> (Std<not_implemented> Undefined))
+     | Seq (s1,s2) -> let r1 =@ eval_cl_step s1 in
+                       match r1 with
+                       | STMT (s1',ack) -> cl_ret_o (STMT<cl_val,cl_language,cl_not> (Pure<cl_stmt,cl_expr> (Seq<cl_stmt,cl_expr> (s1',s2)),ack))
+                       | VALUE _ -> cl_ret_o (STMT<cl_val,cl_language,cl_not> (s2,OK<cl_ack>))
+                       | _ -> cl_ret_o ERROR<cl_val,cl_language,cl_not>
+                      end
+     | Cond (e,s_t,s_f) -> let Std b =@ eval_cl_expr e in
+                         match b with
+                         | Bool T -> cl_ret_o (STMT<cl_val,cl_language,cl_not> (s_t,OK<cl_ack>))
+                         | Bool F -> cl_ret_o (STMT<cl_val,cl_language,cl_not> (s_f,OK<cl_ack>))
+                         | _ -> cl_ret_o ERROR<cl_val,cl_language,cl_not>
+                            end
+     | Skip -> cl_ret_o (VALUE<cl_val,cl_language,cl_not> (Std<not_implemented> Undefined))
+     | While (e,s') -> let Std b =@ eval_cl_expr e in
+                       match b with
+                       | Bool T -> cl_ret_o (STMT<cl_val,cl_language,cl_not> (Pure<cl_stmt,cl_expr> (Seq<cl_stmt,cl_expr> (s', s)),OK<cl_ack>))
+                       | Bool F -> cl_ret_o (VALUE<cl_val,cl_language,cl_not> (Std<cl_val_type> Undefined))
+                       | _ -> cl_ret_o ERROR<cl_val,cl_language,cl_not>
+                       end
+     end
+  | ExtSTMT (Call args) -> cl_ret_o (STMT<cl_val,cl_language,cl_not> (Pure<cl_stmt,cl_expr> Skip<cl_stmt,cl_expr>, EXTACK<cl_ack> (Notify args)))
+  end
+
+
+val str_of_cl_stmt_ext : cl_stmt -> str
+val str_of_cl_stmt (s:cl_language) : str =
+  str_of_stmt_ext<cl_stmt,cl_val_type,cl_val_type> s
+                                                   str_of_not_implemented
+                                                   (λ e' : cl_val_type ->
+                                                           λ _: (cl_val_type -> str) ->
+                                                                str_of_not_implemented e')
+                                                   (λ s' : cl_stmt ->
+                                                           λ _ : (cl_val_type -> str) ->
+                                                               λ_ : (cl_val_type -> (cl_val_type -> str) -> str) ->
+                                                                    str_of_cl_stmt_ext s')
+
+
+val subst (p:cl_language) (x_i:var) (v_c:cl_val): cl_language =
+  match p with
+  | Pure p' ->
+     match p' with
+     | Ret ec -> let ec' = subst_expr ec x_i v_c in Pure<cl_stmt,cl_expr> (Ret<cl_stmt,cl_expr> ec')
+     | Ass (xc,ec) -> let ec' = subst_expr ec x_i v_c in Pure<cl_stmt,cl_expr> (Ass<cl_stmt,cl_expr> (xc,ec'))
+     | Seq (cp1,cp2) -> let cp1' = subst cp1 x_i v_c in
+                       let cp2' = subst cp2 x_i v_c in Pure<cl_stmt,cl_expr> (Seq<cl_stmt,cl_expr> (cp1',cp2'))
+     | Cond (ec,cp1,cp2) -> let ec' = subst_expr ec x_i v_c in
+                           let cp1' = subst cp1 x_i v_c in
+                           let cp2' = subst cp2 x_i v_c in Pure<cl_stmt,cl_expr> (Cond<cl_stmt,cl_expr> (ec',cp1',cp2'))
+     | Skip -> Pure<cl_stmt,cl_expr> Skip<cl_stmt,cl_expr>
+     | While (ec,cp) -> let ec' = subst_expr ec x_i v_c in
+                       let cp' = subst cp x_i v_c in Pure<cl_stmt,cl_expr> (While<cl_stmt,cl_expr> (ec',cp'))
+     end
+  | ExtSTMT (Call (u,v_c,(x_c,cp))) -> let cp' = subst cp x_i v_c in ExtSTMT<cl_stmt,cl_expr> (Call (u,v_c,(x_c,cp')))
+  end
+
+val subst_expr  (ec:cl_expr) (x_i:var) (v_c:cl_val) : cl_expr =
+  match ec with
+  | Expr ec' ->
+     match ec' with
+     | Value v -> ec
+     | Var xc -> let b = var_eq(x_i,xc) in
+                match b with
+                | T -> Expr<cl_val_type,cl_val> (Value<cl_val_type,cl_val> v_c)
+                | F -> Expr<cl_val_type,cl_val> (Var<cl_val_type,cl_val> xc)
+                end
+     | BOp (oc,ec1,ec2) -> let ec1' = subst_expr ec1 x_i v_c in
+                          let ec2' = subst_expr ec2 x_i v_c in Expr<cl_val_type,cl_val> (BOp<cl_val_type,cl_val> (oc,ec1',ec2'))
+     | UOp (oc,ec') -> let ec'' = subst_expr ec' x_i v_c in Expr<cl_val_type,cl_val> (UOp<cl_val_type,cl_val> (oc,ec''))
+     end
+  | ExtExpr _ -> ExtExpr<cl_val_type,cl_val> NotImplemented
+  end

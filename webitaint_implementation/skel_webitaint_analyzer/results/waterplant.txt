@@ -1,0 +1,42 @@
+Execution Summary:
+
+This execution returns ERROR!
+The tainted sink has device_id = (valve,waterplant)
+Execution Trace =
+ServiceInit => ID : 2, URL : alarmHandler, TAINTED : no, TIME : 0
+ServiceInit => ID : 1, URL : attack, TAINTED : yes, TIME : 0
+ServiceInit => ID : 3, URL : waterDistributionHandler, TAINTED : no, TIME : 0
+ServiceStep => ID : (1,1), HOST : hostB, TAINTED : yes, TIME : 0
+ServiceStep => ID : (2,2), HOST : hostA, TAINTED : no, TIME : 0
+ServiceStep => ID : (3,3), HOST : hostA, TAINTED : no, TIME : 0
+ServiceStep => ID : (3,3), HOST : hostA, TAINTED : no, TIME : 0
+ServiceStep => ID : (2,2), HOST : hostA, TAINTED : no, TIME : 0
+ServiceStep => ID : (2,2), HOST : hostA, TAINTED : no, TIME : 0
+ServiceStep => ID : (3,3), HOST : hostA, TAINTED : no, TIME : 0
+RetServiceBoot => ID : 1, URL : attack, TAINTED : yes, TIME : 0
+ClientStep => ID : 1, URL : attack, TAINTED : yes, TIME : 0
+ClientCallSafe => ID : 1, URL : addChemicals, SID : 4, TAINTED : yes, TIME : 0
+ServiceStep => ID : (1,4), HOST : hostA, TAINTED : yes, TIME : 0
+ServiceStep => ID : (1,4), HOST : hostA, TAINTED : yes, TIME : 0
+ServiceStep => ID : (1,4), HOST : hostA, TAINTED : yes, TIME : 0
+ClientStep => ID : 1, URL : attack, TAINTED : yes, TIME : 0
+DeviceSensor => EVENT : PE sodium_sensor valve 4 TIME 0, TIME : 0
+DeviceActuatorSafe => EVENT : ACT add_sodium DEVICE_NAME : sodium_dispenser LOCATION waterplant TIME 1, TAINTED : yes, TIME : 1
+DeviceSensor => EVENT : PE sodium_sensor waterplant 6 TIME 2, TIME : 2
+DeviceReading => ID : 2, SID : 2, DEVICE_ID : (sodium_sensor,waterplant), VALUE : 6, TAINTED : yes, TIME : 3
+ServiceStep => ID : (2,2), HOST : hostA, TAINTED : yes, TIME : 3
+ServiceStep => ID : (1,4), HOST : hostA, TAINTED : yes, TIME : 3
+ServiceStep => ID : (2,2), HOST : hostA, TAINTED : yes, TIME : 3
+ServiceStep => ID : (1,4), HOST : hostA, TAINTED : yes, TIME : 3
+ServiceStep => ID : (1,4), HOST : hostA, TAINTED : yes, TIME : 3
+ServiceStep => ID : (1,4), HOST : hostA, TAINTED : yes, TIME : 3
+ServiceStep => ID : (2,2), HOST : hostA, TAINTED : yes, TIME : 3
+ServiceStep => ID : (2,2), HOST : hostA, TAINTED : yes, TIME : 3
+DeviceSensor => EVENT : PE sodium_sensor valve 4 TIME 3, TIME : 3
+DeviceReading => ID : 3, SID : 3, DEVICE_ID : (sodium_sensor,valve), VALUE : 4, TAINTED : yes, TIME : 4
+ServiceStep => ID : (3,3), HOST : hostA, TAINTED : yes, TIME : 4
+ServiceStep => ID : (3,3), HOST : hostA, TAINTED : yes, TIME : 4
+ServiceStep => ID : (3,3), HOST : hostA, TAINTED : yes, TIME : 4
+ServiceStep => ID : (3,3), HOST : hostA, TAINTED : yes, TIME : 4
+DeviceSensor => EVENT : PE sodium_sensor valve 4 TIME 4, TIME : 4
+DeviceActuatorUnsafe => EVENT : ACT valve_open DEVICE_NAME : valve LOCATION waterplant TIME 5, TAINTED : yes, TIME : 5

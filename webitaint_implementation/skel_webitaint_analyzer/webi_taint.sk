@@ -1,0 +1,854 @@
+open wtypes
+open deviceLanguageTaint
+open clientLanguage
+open serverLanguage
+
+type webiLanguage =
+| Service (url,((var,sr_language),hostname,taint))
+| Client ((identifier,url),cl_val)
+| Malicious ((identifier,url),cl_val)
+| WL (webiLanguage,webiLanguage)
+
+
+(* host memory *)
+type hostsMemory := state<data_state>
+val _HM_r : hostname → hostsMemory -> (data_state,hostsMemory) = st_read<data_state>
+val _HM_w : hostname -> data_state → hostsMemory -> ((),hostsMemory) = st_write<data_state>
+
+(* callback *)
+type callback := (var, cl_language) (*b := λx.P*)
+type assoc_callback := (identifier,callback)
+type callbacks := _list<assoc_callback> (*B is an associative _list*)
+
+val b_get (_B_:callbacks) (j:identifier) : ((identifier,callback),callbacks) =
+  let (b,_B_') = lassoc<identifier,callback> j _B_ in
+  ((j,b),_B_')
+
+val b_add (_B_:callbacks) (b:(identifier,callback)): callbacks =
+    ladd<(identifier,callback)> (b,_B_)
+
+(*Thunks*)
+type thunk := (callback, cl_output) (*t : (λx.P, v_c)*)
+type thunks := _list<thunk>
+
+val t_pick  (_T_:thunks): (thunk,thunks) =
+    lpick<thunk> _T_
+
+val t_add  (_T_:thunks) (t:thunk ): thunks =
+    ladd<thunk> (t,_T_)
+
+(*Client Configuration*)
+
+type clientConfiguration := (cl_output,state<cl_val>) (*cc*)
+type webClient = | Run ((clientConfiguration, callbacks, thunks),url,taint)
+                 | Boot (url,taint)
+
+
+type cl_identifier := identifier
+type assoc_webClient := (cl_identifier,webClient)
+
+(* record of associative _lists *)
+type webClients = (_CC_boot : _list<assoc_webClient>,
+                   _CC_r : _list<assoc_webClient>,
+                   _CC_c : _list<assoc_webClient>,
+                   _CC_t : _list<assoc_webClient>,
+                   _CC_e : _list<assoc_webClient>)
+
+val cc_pick (_CC_:_list<assoc_webClient>) :
+  (assoc_webClient,_list<assoc_webClient>) =
+    lpick<assoc_webClient> _CC_
+
+val _cc_r : str
+val _cc_t : str
+val _cc_c : str
+val _cc_e : str
+val _cc_boot : str
+
+val cc_add  (_CC_ : webClients) (id : cl_identifier)
+      (cc : webClient) : webClients =
+  match cc with
+  |  Run (((cout,_),_B_,_T_),_,_) ->
+      match cout with
+      | VALUE _ ->
+         let _B_empty = lempty<assoc_callback> _B_ in
+         let _T_empty = lempty<thunk> _T_ in
+         match (_B_empty,_T_empty) with
+         | (T,T) -> let _CC_e' = ladd<assoc_webClient> ((id,cc), _CC_._CC_e) in
+                   (_CC_ <- (_CC_e = _CC_e'))
+         | _ -> let _CC_t' = ladd<assoc_webClient> ((id,cc), _CC_._CC_t) in
+                   (_CC_ <- (_CC_t = _CC_t'))
+         end
+      | STMT (_,OK) ->
+         let _CC_r' = ladd<assoc_webClient> ((id,cc), _CC_._CC_r) in
+         (_CC_ <- (_CC_r = _CC_r'))
+      | STMT (_, EXTACK (Notify _)) ->
+         let _CC_c' = ladd<assoc_webClient> ((id,cc), _CC_._CC_c) in
+         (_CC_ <- (_CC_c = _CC_c'))
+      | ERROR -> _CC_
+      end
+   | Boot _ ->
+     let _CC_boot' = ladd<assoc_webClient> ((id,cc), _CC_._CC_boot) in
+     (_CC_ <- (_CC_boot = _CC_boot'))
+   end
+
+val termination_condition (conf:webiConfiguration): _bool =
+  let b1 = lempty<assoc_webClient> conf._CC_._CC_r in
+  let b2 = lempty<assoc_webClient> conf._CC_._CC_c in
+  let b3 = lempty<assoc_webClient> conf._CC_._CC_t in
+  let b4 = lempty<assoc_webClient> conf._CC_._CC_boot in
+  let b1b2 = and (b1,b2) in
+  let b3b4 = and (b3,b4) in
+  and (b1b2,b3b4)
+
+
+val cc_get  (_CC_:_list<assoc_webClient>) (id:cl_identifier ) :
+  (assoc_webClient,_list<assoc_webClient>) =
+  lremove_assoc<cl_identifier,webClient> id _CC_
+
+val has_thunk ((_,cc):assoc_webClient) : _bool =
+  let Run ((_,_,_T_),_,_) = cc in
+  let r = lempty<thunk> _T_ in not r
+
+val find_thunks (_CC_ : _list<assoc_webClient>) : (_list<assoc_webClient>,_list<assoc_webClient>) =
+  lpartition<assoc_webClient> has_thunk _CC_
+
+val cc_with_thunk  (_CC_:_list<assoc_webClient> ):  (assoc_webClient,_list<assoc_webClient>) =
+    let (_CC_thunks,_CC_callbacks) = find_thunks _CC_ in
+    let (cc,_CC_thunks') = lpick<assoc_webClient> _CC_thunks in
+    let _CC_' = lappend<assoc_webClient> (_CC_thunks', _CC_callbacks) in
+    (cc,_CC_')
+
+
+
+val cc_by_id (id:identifier) (_CC_: webClients) : (assoc_webClient,webClients) =
+    branch let (cc,_CC_e') = cc_get _CC_._CC_e id in
+           (cc,(_CC_ <- (_CC_e = _CC_e')))
+    or     let (cc,_CC_r') = cc_get _CC_._CC_r id in
+           (cc,(_CC_ <- (_CC_r = _CC_r')))
+    or     let (cc,_CC_c') = cc_get _CC_._CC_c id in
+           (cc,(_CC_ <- (_CC_c = _CC_c')))
+    or     let (cc,_CC_t') = cc_get _CC_._CC_t id in
+           (cc,(_CC_ <- (_CC_t = _CC_t')))
+    end
+
+val boot_by_id  (id:cl_identifier) (_CC_: webClients) : (assoc_webClient,webClients) =
+  let (cc,_CC_boot') = lremove_assoc<identifier,webClient> id _CC_._CC_boot in
+  (cc,(_CC_ <- (_CC_boot = _CC_boot')))
+
+
+(*service configuration*)
+type runningServiceConfiguration := (sr_output,state<sr_val>) (*sc*)
+(*running service state*)
+type runningServiceState := (runningServiceConfiguration, hostname, taint) (*ss*)
+type sr_identifier := (identifier,identifier)
+type assoc_runningServiceState := (sr_identifier,runningServiceState)
+
+
+(*set of web server configurations*)
+type runningServiceStates = (_SS_e : _list<assoc_runningServiceState>,
+                             _SS_r : _list<assoc_runningServiceState>,
+                             _SS_a : _list<assoc_runningServiceState>,
+                             _SS_g : _list<assoc_runningServiceState>)
+
+val ss_pick  (_SS_:_list<assoc_runningServiceState> ):
+  (assoc_runningServiceState, _list<assoc_runningServiceState>) =
+    lpick<assoc_runningServiceState> _SS_
+
+val _ss_r : str
+val _ss_e : str
+val _ss_a : str
+val _ss_g : str
+
+val ss_add  (_SS_:runningServiceStates) (id:sr_identifier)
+      (ss:runningServiceState) : runningServiceStates =
+    let ((sout,_),_,_) = ss in
+    match sout with
+    | VALUE _ -> let _SS_' = ladd<assoc_runningServiceState> ((id,ss), _SS_._SS_e) in
+                (_SS_ <- (_SS_e = _SS_'))
+    | STMT o ->
+       match o with
+       | (_, OK) -> let _SS_' = ladd<assoc_runningServiceState> ((id,ss), _SS_._SS_r) in
+                      (_SS_ <- (_SS_r = _SS_'))
+       | (_, EXTACK (NotifiedGet _)) -> let _SS_' = ladd<assoc_runningServiceState> ((id,ss), _SS_._SS_r) in
+                                       (_SS_ <- (_SS_r = _SS_'))
+       | (_, EXTACK (ActAck _)) -> let _SS_' = ladd<assoc_runningServiceState> ((id,ss), _SS_._SS_a) in
+                                  (_SS_ <- (_SS_a = _SS_'))
+       | (_, EXTACK (GetAck _)) -> let _SS_' = ladd<assoc_runningServiceState> ((id,ss), _SS_._SS_g) in
+                                  (_SS_ <- (_SS_g = _SS_'))
+       end
+    | ERROR -> _SS_
+    end
+
+(*Services to initialize I*)
+type webClientBoot := ((identifier,url),cl_val)
+type webClientsBoot := _list<webClientBoot>
+val boot_pick  (_SS_:webClientsBoot ):
+  (webClientBoot, webClientsBoot) =
+    lpick<webClientBoot> _SS_
+
+
+(*<HM,SS,CC,I,IC,(some extra stuff)>*)
+type webiConfiguration = (_HM_ : hostsMemory,
+                          _SS_ : runningServiceStates,
+                          _CC_ : webClients,
+                          _I_ : initializers,
+                          _L_ : logEvents,
+                          _IC_ : deviceConfigurations,
+                          debug : _list<(webiRule,time)>,
+                          jcount : identifier)
+
+
+type initializers = ( _Ia_ : webClientsBoot, _Is_ : webClientsBoot)
+
+(*world oracle type declaration*)
+type world_oracle := (logEvents,_list<event>) → logSensor
+
+val log_time (_L_ : logEvents) : time =
+  llength<logEvent> _L_
+val temp_succ (t : time) : time =
+  add(t,one)
+
+val fresh  (j:identifier ): identifier =
+    add (j,one)
+
+type webiRule =
+| ServerStep (hostname,(identifier,identifier),taint)
+| RetService (url,identifier,taint)
+| RetServiceDiscard taint
+| RetServiceBoot (url,identifier,taint)
+| ServiceInitSafe (identifier,url,taint)
+| ServiceInitUnsafe (identifier,url,taint)
+| ClientCallSafe (identifier,(url,identifier),taint)
+| ClientCallUnsafe (identifier,(url,identifier),taint)
+| WRun (url,identifier,taint)
+| ClientStep (url,identifier,taint)
+| DeviceSensor (logEvent)
+| DeviceActuatorSafe (logEvent,taint)
+| DeviceActuatorUnsafe (logEvent,taint)
+| DeviceReading ((identifier,identifier),deviceID,dv_val,taint)
+
+
+val pp_debug (c : out_chan) (debug : _list<(webiRule,time)>) : () =
+  let b = lempty<(webiRule,time)> debug in
+  match b with
+  | T -> ()
+  | F -> let (x,debug') = lhd<(webiRule,time)> debug in
+         match x with
+         | (ServerStep (h,(i,j),t),time) -> pp_serverStep c h i j t time
+         | (RetService (u,i,t),time) -> pp_retService c u i t time
+         | (RetServiceBoot (u,i,t),time) -> pp_retServiceBoot c u i t time
+         | (RetServiceDiscard t,time) -> pp_retServiceDiscard c t time
+         | (ServiceInitSafe (i,u,t),time) -> pp_serviceInit c i u t time
+         | (ServiceInitUnsafe (i,u,t),time) -> pp_serviceInit c i u t time
+         | (ClientCallSafe (i,(u,j),t),time) -> pp_clientCallSafe c i u j t time
+         | (ClientCallUnsafe (i,(u,j),t),time) -> pp_clientCallUnsafe c i u j t time
+         | (WRun (u,i,t),time) -> pp_run c u i t time
+         | (ClientStep (u,i,t),time) -> pp_clientStep c u i t time
+         | (DeviceSensor le,time) -> pp_deviceSensor c le time
+         | (DeviceActuatorSafe (le,t),time) -> pp_deviceActuatorSafe c le t time
+         | (DeviceActuatorUnsafe (le,t),time) -> pp_deviceActuatorUnsafe c le t time
+         | (DeviceReading ((i,j),d,v,t),time) -> pp_deviceReading c i j d v t time
+         end;
+         pp_debug c debug'
+   end
+
+val pp_d (c : out_chan) (debug : (webiRule,time)) : () =
+  match debug with
+  | (ServerStep (h,(i,j),t),time) -> pp_serverStep c h i j t time
+  | (RetService (u,i,t),time) -> pp_retService c u i t time
+  | (RetServiceBoot (u,i,t),time) -> pp_retServiceBoot c u i t time
+  | (RetServiceDiscard t,time) -> pp_retServiceDiscard c t time
+  | (ServiceInitSafe (i,u,t),time) -> pp_serviceInit c i u t time
+  | (ServiceInitUnsafe (i,u,t),time) -> pp_serviceInit c i u t time
+  | (ClientCallSafe (i,(u,j),t),time) -> pp_clientCallSafe c i u j t time
+  | (ClientCallUnsafe (i,(u,j),t),time) -> pp_clientCallUnsafe c i u j t time
+  | (WRun (u,i,t),time) -> pp_run c u i t time
+  | (ClientStep (u,i,t),time) -> pp_clientStep c u i t time
+  | (DeviceSensor le,time) -> pp_deviceSensor c le time
+  | (DeviceActuatorSafe (le,t),time) -> pp_deviceActuatorSafe c le t time
+  | (DeviceActuatorUnsafe (le,t),time) -> pp_deviceActuatorUnsafe c le t time
+  | (DeviceReading ((i,j),d,v,t),time) -> pp_deviceReading c i j d v t time
+  end
+
+
+val pp_serverStep : out_chan -> hostname -> identifier -> identifier -> taint -> time -> ()
+val pp_retService : out_chan -> url -> identifier -> taint -> time -> ()
+val pp_retServiceBoot : out_chan -> url -> identifier -> taint -> time -> ()
+val pp_retServiceDiscard : out_chan -> taint -> time -> ()
+val pp_serviceInit : out_chan -> identifier -> url -> taint -> time -> ()
+val pp_clientCallSafe : out_chan -> identifier -> url -> identifier -> taint -> time -> ()
+val pp_clientCallUnsafe : out_chan -> identifier -> url -> identifier -> taint -> time -> ()
+val pp_run : out_chan -> url -> identifier -> taint -> time -> ()
+val pp_clientStep : out_chan -> url -> identifier -> taint -> time -> ()
+val pp_deviceSensor : out_chan -> logEvent -> time -> ()
+val pp_deviceActuatorSafe : out_chan -> logEvent -> taint -> time -> ()
+val pp_deviceActuatorUnsafe : out_chan -> logEvent -> taint -> time -> ()
+val pp_deviceReading : out_chan -> identifier -> identifier -> deviceID -> dv_val -> taint -> time -> ()
+
+val pp_webi (c : out_chan)(o : out) : () =
+  match o with
+  | Error (d,conf) -> pp_Error c d conf.debug
+  | Ok conf -> pp_Ok c conf.debug
+  end
+
+val pp_printing_Error_conf : out_chan -> ()
+val pp_printing_sink_reached : out_chan -> ()
+val pp_printing_trace : out_chan -> ()
+val pp_Error (c : out_chan) (d : deviceID) (debug : _list<(webiRule,time)>) : () =
+  pp_printing_Error_conf c;
+  pp_printing_sink_reached c;
+  pp_deviceID c d;
+  pp_printing_trace c;
+  let debug' = lrev<(webiRule,time)> debug in
+  pp_debug c debug'
+
+val pp_printing_Ok_conf : out_chan -> ()
+val pp_Ok (c : out_chan) (debug : _list<(webiRule,time)>) : () =
+  pp_printing_Ok_conf c;
+  pp_printing_trace c;
+  let debug' = lrev<(webiRule,time)> debug in
+  pp_debug c debug'
+
+
+val pp_printing_result : out_chan -> ()
+val pp_result (c : out_chan) (o : out) : () =
+  pp_printing_result c;
+  pp_webi c o
+
+
+
+type out = | Error (deviceID,webiConfiguration) | Ok webiConfiguration
+
+
+type worldSetting = (wo : world_oracle,
+                     _E_ : _list<event>,
+                     dwo : dep_world,
+                     sink : deviceID -> taint_sensitive
+                    )
+
+type dep_world := _list<(deviceID,deviceID)>
+type taint_sensitive = | Sensitive | Insensitive
+
+type _IC_eval := deviceConfigurations -> dv_stmt -> (deviceConfigurations,voption<dv_val>)
+
+
+val last_time (l:logEvents) : time =
+    log_time l
+
+type service_initializer := ((var,sr_language), hostname,taint)
+type url_map := state<service_initializer>
+
+val _webServices : str
+val webServices (u:url) (map_url:url_map): (serviceInit,hostname,taint) =
+    let (((x,prg),h,taint),_) = (st_read<service_initializer> u map_url) in
+    let si = (λ v_s : sr_val →
+               let s = init_state<sr_val> () in
+               let ((),mu_ls) = sr_write x v_s s in
+               (STMT<sr_val,sr_language,sr_not> (prg,OK<sr_ack>),mu_ls)) in
+    (si,h,taint)
+
+
+type serviceInit := sr_val → runningServiceConfiguration
+
+
+val max_taint (sr_t : taint) (dv_t : taint) : taint =
+    branch let (Taint, Taint) = (sr_t,dv_t) in sr_t
+    or     let (Taint, Untaint) = (sr_t,dv_t) in sr_t
+    or     let (Untaint, Taint) = (sr_t,dv_t) in Taint
+    or     let (Untaint, Untaint) = (sr_t,dv_t) in sr_t
+    end
+
+
+val srv_to_cl_prg (tp:t_language): cl_language =
+  match tp with
+  | Pure tp' ->
+     match tp' with
+     | Ass (x,e) -> let e' = sr_to_cl_expr e in Pure<cl_stmt,cl_expr> (Ass<cl_stmt,cl_expr> (x,e'))
+     | Ret e -> let e' = sr_to_cl_expr e in Pure<cl_stmt,cl_expr> (Ret<cl_stmt,cl_expr> e')
+     | Seq (s1,s2) -> let s1' = srv_to_cl_prg s1 in let s2' = srv_to_cl_prg s2 in Pure<cl_stmt,cl_expr> (Seq<cl_stmt,cl_expr> (s1',s2'))
+     | Cond (e,s1,s2) -> let e' = sr_to_cl_expr e in let s1' = srv_to_cl_prg s1 in let s2' = srv_to_cl_prg s2 in Pure<cl_stmt,cl_expr> (Cond<cl_stmt,cl_expr> (e',s1',s2'))
+     | Skip -> Pure<cl_stmt,cl_expr> Skip<cl_stmt,cl_expr>
+     | While (e,s1) -> let e' = sr_to_cl_expr e in let s1' = srv_to_cl_prg s1 in Pure<cl_stmt,cl_expr> (While<cl_stmt,cl_expr> (e',s1'))
+     end
+  | ExtSTMT (T_Call (u,dv,(x, tp))) ->
+     let V (Std v) = dv in
+     let cp = srv_to_cl_prg tp in
+     ExtSTMT<cl_stmt,cl_expr> (Call (u,Std<cl_val_type> v,(x, cp)))
+  end
+
+val sr_to_cl_expr (te:sr_t_expr) : cl_expr =
+  match te with
+  | ExtExpr _ -> ExtExpr<cl_val_type,cl_val> NotImplemented
+  | Expr te' ->
+     match te' with
+     | Value v -> let Std v' = v in Expr<cl_val_type,cl_val> (Value<cl_val_type,cl_val> (Std<cl_val_type> v'))
+     | Var x -> Expr<cl_val_type,cl_val> (Var<cl_val_type,cl_val> x)
+     | BOp (o,e1,e2) -> let e1' = sr_to_cl_expr e1 in
+                       let e2' = sr_to_cl_expr e2 in
+                       Expr<cl_val_type,cl_val> (BOp<cl_val_type,cl_val> (o,e1',e2'))
+     | UOp (o,e1) -> let e1' = sr_to_cl_expr e1 in
+                    Expr<cl_val_type,cl_val> (UOp<cl_val_type,cl_val> (o,e1'))
+     end
+  end
+
+val gencc  (sv:sr_val): cl_output =
+  match sv with
+  | Std v -> VALUE<cl_val,cl_language,cl_not> (Std<cl_val_type> v)
+  | ExtValue (TildeClos stp) -> let cp =  srv_to_cl_prg stp in
+                               STMT<cl_val,cl_language,cl_not> (cp,OK<cl_ack>)
+  end
+
+
+
+(*SERVICEINIT*)
+
+val eval_ServiceInitSafe (_:(worldSetting)) (map_url : url_map) (conf:webiConfiguration ): webiConfiguration =
+    let (((j,u),v_a),_Is_') = boot_pick conf._I_._Is_ in
+    let (serviceinit,h,tnt) = webServices u map_url in
+    let max_tnt = max_taint tnt Untaint in
+    let Std v = v_a in
+    let sc = serviceinit(Std<sr_val_type> v) in
+    let _CC_' = cc_add conf._CC_ j (Boot (u,max_tnt)) in
+    let _SS_' = ss_add conf._SS_ (j,j) (sc,h,max_tnt) in
+    let t = last_time(conf._L_) in  (*extra*)
+    let debug = ladd<(webiRule,time)> ((ServiceInitSafe (j,u,max_tnt),t),conf.debug) in
+    (conf <- (_I_ = (conf._I_ <- (_Is_ = _Is_')), _CC_ = _CC_', _SS_ = _SS_', jcount = j, debug = debug))
+
+val eval_ServiceInitUnsafe (_:(worldSetting)) (map_url : url_map) (conf:webiConfiguration ): webiConfiguration =
+    let (((j,u),v_a),_Ia_') = boot_pick conf._I_._Ia_ in
+    let (serviceinit,h,_) = webServices u map_url in
+    let Std v = v_a in
+    let sc = serviceinit(Std<sr_val_type> v) in
+    let _CC_' = cc_add conf._CC_ j (Boot (u,Taint)) in
+    let _SS_' = ss_add conf._SS_ (j,j) (sc,h,Taint) in
+    let t = last_time(conf._L_) in  (*extra*)
+    let debug = ladd<(webiRule,time)> ((ServiceInitUnsafe (j,u,Taint),t),conf.debug) in
+    (conf <- (_I_ = (conf._I_ <- (_Ia_ = _Ia_')), _CC_ = _CC_', _SS_ = _SS_', jcount = j, debug = debug))
+
+
+(*SERVERSTEP*)
+
+
+val eval_ServerStep  (_:worldSetting ) (conf:webiConfiguration ): webiConfiguration =
+    let (((cid,j),((sc,mu_ls),h,tnt)),_SS_r') = ss_pick conf._SS_._SS_r in
+    let (mu_h,_) = _HM_r h conf._HM_ in
+    let ((sc',mu_h'),mu_ls') = eval_sr_step sc mu_h mu_ls in
+    let (_,_HM_') = _HM_w h mu_h' conf._HM_ in
+    let _SS_'' = ss_add (conf._SS_ <- (_SS_r = _SS_r')) (cid,j) ((sc',mu_ls'),h,tnt) in
+    let t = last_time(conf._L_) in (*extra*)
+    let debug' = ladd<(webiRule,time)> ((ServerStep (h,(cid,j),tnt),t),conf.debug) in (*extra*)
+    (conf <- (_HM_ = _HM_',_SS_ = _SS_'', debug = debug'))
+
+
+
+(*RETSERVICE*)
+
+val eval_RetService  (_:worldSetting ) (conf:webiConfiguration): webiConfiguration =
+    let (((cid,j),((VALUE vs,_),_,s_tnt)),_SS_e') = ss_pick conf._SS_._SS_e in
+    let ((_,Run ((cc,_B_,_T_),u,c_tnt)),_CC_') = cc_by_id cid conf._CC_ in
+    let ((_,b),_B_') = b_get _B_ j in
+    let max_tnt = max_taint s_tnt c_tnt in
+    let VALUE vc = gencc(vs) in
+    let _T_' = t_add _T_ (b,VALUE<cl_val,cl_language,cl_not> vc) in
+    let _CC_'' = cc_add _CC_' cid (Run ((cc,_B_',_T_'),u,max_tnt)) in
+    let t = last_time(conf._L_) in (*extra*)
+    let debug' = ladd<(webiRule,time)> ((RetService (u,cid,max_tnt),t),conf.debug) in (*extra*)
+    (conf <- (_SS_ = (conf._SS_ <- (_SS_e = _SS_e')), _CC_ = _CC_'', debug = debug'))
+
+val eval_RetServiceDiscard  (_:worldSetting ) (conf:webiConfiguration ): webiConfiguration =
+    let (((cid,j),((VALUE vs,_),_,s_tnt)),_SS_e') = ss_pick conf._SS_._SS_e in
+    let ((_,Run ((cc,_B_,_T_),u,c_tnt)),_CC_') = cc_by_id cid conf._CC_ in
+    let ((_,_),_B_') = b_get _B_ j in
+    let max_tnt = max_taint s_tnt c_tnt in
+    let STMT _ = gencc(vs) in
+    let _CC_'' = cc_add _CC_' cid (Run ((cc,_B_',_T_),u,c_tnt)) in
+    let t = last_time(conf._L_) in (*extra*)
+    let debug' = ladd<(webiRule,time)> ((RetServiceDiscard max_tnt,t),conf.debug) in (*extra*)
+    (conf <- (_SS_ = (conf._SS_ <- (_SS_e = _SS_e')), _CC_ = _CC_'', debug = debug'))
+
+
+val eval_RetServiceBoot  (_:worldSetting ) (conf:webiConfiguration ): webiConfiguration =
+    let (((cid,_),((VALUE vs,_),_,s_tnt)),_SS_e') = ss_pick conf._SS_._SS_e in
+    let ((_,Boot (u,c_tnt)),_CC_') = boot_by_id cid conf._CC_ in (*why is not uniform with the other get_cc*)
+    let max_tnt = max_taint s_tnt c_tnt in
+    let cc = gencc(vs) in let mu_c = init_state<cl_val> () in
+    let _CC_'' = cc_add _CC_' cid (Run (((cc,mu_c),empty_B_,empty_T_),u,s_tnt)) in
+    let t = last_time(conf._L_) in  (*extra*)
+    let debug' = ladd<(webiRule,time)> ((RetServiceBoot (u,cid,max_tnt),t),conf.debug) in  (*extra*)
+    (conf <- (_SS_ = (conf._SS_ <- (_SS_e = _SS_e')), _CC_ = _CC_'', debug = debug'))
+
+val empty_B_ : callbacks = lmk_empty<assoc_callback>
+val empty_T_ : thunks = lmk_empty<thunk>
+
+(*CLIENTSTEP*)
+
+val eval_ClientStep  (_:worldSetting ) (conf:webiConfiguration ): webiConfiguration =
+    let ((cid,Run (((STMT (cp,OK),mu_c),_B_,_T_),u,tnt)),_CC_r') = cc_pick conf._CC_._CC_r in
+    let cc' = eval_cl_step cp mu_c in
+    let _CC_' = cc_add (conf._CC_ <- (_CC_r = _CC_r')) cid (Run ((cc',_B_,_T_),u,tnt)) in
+    let t = last_time(conf._L_) in  (*extra*)
+    let debug' = ladd<(webiRule,time)> ((ClientStep (u,cid,tnt),t),conf.debug) in  (*extra*)
+    (conf <- (_CC_ = _CC_', debug = debug'))
+
+
+(*CLIENTCALL*)
+
+val eval_SafeClientCall  (_:worldSetting ) (map_url : url_map) (conf : webiConfiguration ): webiConfiguration =
+    let ((cid,Run (((STMT (cp,EXTACK (Notify (u',v_a,b))),mu_c),_B_,_T_),u,tnt)),_CC_c') = cc_pick conf._CC_._CC_c in
+    let (serviceinit,h,Untaint) = webServices u' map_url in
+    let Std v = v_a in
+    let sc = serviceinit (Std<sr_val_type> v) in
+    let j = fresh(conf.jcount) in (* for now I keep fresh here*)
+    let _B_' = b_add _B_ (j,b) in
+    let _CC_'' = cc_add (conf._CC_ <- (_CC_c = _CC_c')) cid (Run (((STMT<cl_val,cl_language,cl_not> (cp,OK<cl_ack>),mu_c),_B_',_T_),u,tnt)) in
+    let _SS_' = ss_add conf._SS_ (cid,j) (sc,h,tnt) in
+    let t = last_time(conf._L_) in (*extra*)
+    let debug = ladd<(webiRule,time)> ((ClientCallSafe (cid,(u',j),tnt),t),conf.debug) in  (*extra*)
+    (conf <- (_CC_ = _CC_'', _SS_ = _SS_',jcount = j, debug = debug))
+
+val eval_UnsafeClientCall  (_:worldSetting ) (map_url : url_map) (conf : webiConfiguration ): webiConfiguration =
+    let ((cid,Run (((STMT (cp,EXTACK (Notify (u',v_a,b))),mu_c),_B_,_T_),u,_)),_CC_c') = cc_pick conf._CC_._CC_c in
+    let (serviceinit,h,Taint) = webServices u' map_url in
+    let Std v = v_a in
+    let sc = serviceinit (Std<sr_val_type> v) in
+    let j = fresh(conf.jcount) in (* for now I keep fresh here*)
+    let _B_' = b_add _B_ (j,b) in
+    let _CC_'' = cc_add (conf._CC_ <- (_CC_c = _CC_c')) cid (Run (((STMT<cl_val,cl_language,cl_not> (cp,OK<cl_ack>),mu_c),_B_',_T_),u,Taint)) in
+    let _SS_' = ss_add conf._SS_ (cid,j) (sc,h,Taint) in
+    let t = last_time(conf._L_) in (*extra*)
+    let debug = ladd<(webiRule,time)> ((ClientCallUnsafe (cid,(u',j),Taint),t),conf.debug) in  (*extra*)
+    (conf <- (_CC_ = _CC_'', _SS_ = _SS_',jcount = j, debug = debug))
+
+(*RUN*)
+
+val eval_Run  (_:worldSetting ) (conf:webiConfiguration ): webiConfiguration =
+    let ((cid,Run (((VALUE _, mu_c),_B_,_T_),u,tnt)),_CC_t') = cc_with_thunk conf._CC_._CC_t in
+    let (((x,_P_),VALUE v_c),_T_') = t_pick _T_ in
+    let _P_' = subst _P_ x v_c in
+    let _CC_' = cc_add (conf._CC_ <- (_CC_t = _CC_t')) cid (Run (((STMT<cl_val,cl_language,cl_not> (_P_',OK<cl_ack>),mu_c),_B_,_T_'),u,tnt))  in
+    let t = last_time(conf._L_) in  (*extra*)
+    let debug = ladd<(webiRule,time)> ((WRun (u,cid,tnt),t),conf.debug) in  (*extra*)
+    (conf <- (_CC_ = _CC_', debug = debug))
+
+
+(*DEVSENS*)
+
+val eval_DeviceSensor  (world:worldSetting ) (eval_dv_step:_IC_eval) (conf:webiConfiguration ): webiConfiguration =
+    let (pe,t) = world.wo(conf._L_, world._E_) in
+    let (_IC_',_) = eval_dv_step conf._IC_  (Sens pe) in
+    let _L_' = ladd<logEvent> ((Log_PE (pe,t)),conf._L_) in
+    let debug = ladd<(webiRule,time)> ((DeviceSensor (Log_PE (pe,t)),t),conf.debug) in  (*extra*)
+    (conf <- (_L_ = _L_',_IC_ = _IC_', debug = debug))
+
+(*DEVICEACTUATOR*)
+
+
+val eval_SafeDeviceActuation (_:worldSetting ) (eval_dv_step:_IC_eval) (conf:webiConfiguration ) : webiConfiguration =
+    let (((cid,j),((STMT (sc,EXTACK (ActAck(a,d,p))),mu_ls),h,Untaint)),_SS_a') = ss_pick conf._SS_._SS_a in
+    let (_IC_',_) = eval_dv_step conf._IC_ (Actuator (a,d,p)) in
+    let _SS_'' = ss_add (conf._SS_ <- (_SS_a = _SS_a')) (cid,j) ((STMT<sr_val,sr_language,sr_not> (sc,OK<sr_ack>),mu_ls),h,Untaint) in
+    let t' = last_time(conf._L_) in
+    let _L_' = ladd<logEvent>(Log_Act (a,d,t'),conf._L_) in
+    let debug' = ladd<(webiRule,time)> ((DeviceActuatorSafe (Log_Act (a,d,t'),Untaint),t'),conf.debug) in  (*extra*)
+    (conf <- (_L_ = _L_', _SS_ = _SS_'', _IC_ = _IC_', debug = debug'))
+
+
+
+val eval_UnsafeDeviceActuation (world:worldSetting ) (eval_dv_step:_IC_eval) (conf:webiConfiguration ): out =
+    let (((cid,j),((STMT (sc,EXTACK (ActAck(a,d,p))),mu_ls),h,Taint)),_SS_a') = ss_pick conf._SS_._SS_a in
+    branch let Sensitive = world.sink d in
+           let t' = last_time(conf._L_) in
+           let debug = ladd<(webiRule,time)> ((DeviceActuatorUnsafe (Log_Act (a,d,t'),Taint),t'),conf.debug) in
+           let conf = conf <- (debug = debug) in
+           Error (d,conf)
+    or     let Insensitive = world.sink d in
+           let (_IC_',_) = eval_dv_step conf._IC_ (Actuator (a,d,p)) in
+           let _IC_'' = taint_dv_deps _IC_' world.dwo d  in
+           let _SS_'' = ss_add (conf._SS_ <- (_SS_a = _SS_a')) (cid,j) ((STMT<sr_val,sr_language,sr_not> (sc,OK<sr_ack>),mu_ls),h,Taint) in
+           let t' = last_time(conf._L_) in
+           let _L_' = ladd<logEvent>((Log_Act (a,d,t')),conf._L_) in
+           let debug = ladd<(webiRule,time)> ((DeviceActuatorSafe (Log_Act (a,d,t'),Taint),t'),conf.debug) in
+           Ok (conf <- (_L_ = _L_', _SS_ = _SS_'', _IC_ = _IC_'', debug = debug))
+    end
+
+
+val taint_configuration (dv: deviceConfiguration) : deviceConfiguration =
+    (dv <- (taint = Taint))
+
+val taint_dv_deps (dvs:deviceConfigurations) (dwo:_list<(deviceID,deviceID)>) (d:deviceID) : deviceConfigurations =
+    branch let T = lempty<(deviceID,deviceID)> dwo in
+           let (VSome dv,dvs') = split_device dvs d lmk_empty<deviceConfiguration> in
+           let dv = taint_configuration dv in
+           ladd<deviceConfiguration>(dv,dvs')
+    or     let F = lempty<(deviceID,deviceID)> dwo in
+           let ((dh,d'),dwo') = lhd<(deviceID,deviceID)> dwo in
+           branch let T = eq_deviceID(d,dh) in
+                  let (VSome dv,dvs') = split_device dvs d' lmk_empty<deviceConfiguration> in
+                  let dv = taint_configuration dv in
+                  let dvs' = ladd<deviceConfiguration>(dv,dvs') in
+                  taint_dv_deps dvs' dwo' d
+           or     let F = eq_deviceID(d,dh) in taint_dv_deps dvs dwo' d
+           end
+    end
+
+
+val is_tainted : taint -> ()
+val not_tainted : taint -> ()
+val get_dv_taint : deviceConfiguration -> taint
+
+
+(*DEVICEREADING*)
+
+
+val eval_DeviceReading  (_:worldSetting) (eval_dv_step:_IC_eval) (conf:webiConfiguration ): webiConfiguration =
+    let (((cid,j),((STMT (sc,EXTACK (GetAck (d,p))),mu_ls),h,tnt)),_SS_g') = ss_pick conf._SS_._SS_g in
+    let VSome dev = get_device conf._IC_ d in
+    let max_tnt = max_taint tnt dev.taint in
+    let (_IC_',VSome v_d) = eval_dv_step conf._IC_ (Reading (d,p)) in
+    let Std v = v_d in
+    let _SS_'' = ss_add (conf._SS_ <- (_SS_g = _SS_g')) (cid,j) ((STMT<sr_val,sr_language,sr_not> (sc,EXTACK<sr_ack> (NotifiedGet (Std<dv_val_type> v))),mu_ls),h,max_tnt) in
+    let t = last_time(conf._L_) in  (*extra*)
+    let debug = ladd<(webiRule,time)> ((DeviceReading ((cid,j),d,v_d,max_tnt),t),conf.debug) in  (*extra*)
+    (conf <- (_SS_ = _SS_'', _IC_ = _IC_', debug = debug))
+
+
+val simulateWebi  (world:worldSetting) (map_url:url_map) (eval_dv_step:_IC_eval) (conf:webiConfiguration) : out =
+  let b_ia = lempty<webClientBoot> conf._I_._Ia_ in
+  let b_is = lempty<webClientBoot> conf._I_._Is_ in
+  let b_t = termination_condition conf in
+  let b = and(b_ia,b_t) in
+  let b = and(b, b_is) in
+  match b with
+  | T -> Ok conf
+  | F ->
+     branch let conf' = eval_ServerStep world conf in simulateWebi world map_url eval_dv_step conf'
+     or     let conf' = eval_RetService world conf in simulateWebi world map_url eval_dv_step conf'
+     or     let conf' = eval_RetServiceDiscard world conf in simulateWebi world map_url eval_dv_step conf'
+     or     let conf' = eval_RetServiceBoot world conf in simulateWebi world map_url eval_dv_step conf'
+     or     let conf' = eval_ClientStep world conf in simulateWebi world map_url eval_dv_step conf'
+     or     let conf' = eval_ServiceInitSafe world map_url conf in simulateWebi world map_url eval_dv_step conf'
+     or     let conf' = eval_ServiceInitUnsafe world map_url conf in simulateWebi world map_url eval_dv_step conf'
+     or     let conf' = eval_SafeClientCall world map_url conf in simulateWebi world map_url eval_dv_step conf'
+     or     let conf' = eval_UnsafeClientCall world map_url conf in simulateWebi world map_url eval_dv_step conf'
+     or     let conf' = eval_Run world conf in simulateWebi world map_url eval_dv_step conf'
+     or     let F = lempty<assoc_runningServiceState> conf._SS_._SS_a in
+            let conf' = eval_DeviceSensor world eval_dv_step conf in
+            let conf'' = eval_SafeDeviceActuation world eval_dv_step conf' in
+            simulateWebi world map_url eval_dv_step conf''
+     or     let F = lempty<assoc_runningServiceState> conf._SS_._SS_a in
+            let conf' = eval_DeviceSensor world eval_dv_step conf in
+            let conf'' = eval_UnsafeDeviceActuation world eval_dv_step conf' in
+            match conf'' with
+            | Error _ -> conf''
+            | Ok conf'' -> simulateWebi world map_url eval_dv_step conf''
+            end
+     or     let F = lempty<assoc_runningServiceState> conf._SS_._SS_g in
+            let conf' = eval_DeviceSensor world eval_dv_step conf in
+            let conf'' = eval_DeviceReading world eval_dv_step conf' in
+            simulateWebi world map_url eval_dv_step conf''
+     end
+  end
+
+val simulateWebi_first_inits  (world:worldSetting) (map_url:url_map) (eval_dv_step:_IC_eval) (conf:webiConfiguration) : out =
+  let b_ia = lempty<webClientBoot> conf._I_._Ia_ in
+  let b_is = lempty<webClientBoot> conf._I_._Is_ in
+  let b_t = termination_condition conf in
+  let b_i = and(b_ia,b_is) in
+  match (b_i,b_t) with
+  | (T,T) ->
+     Ok conf
+  | (F,_) ->
+     branch  let conf' = eval_ServiceInitSafe world map_url conf in
+             simulateWebi_first_inits world map_url eval_dv_step conf'
+     or      let conf' = eval_ServiceInitUnsafe world map_url conf in
+             simulateWebi_first_inits world map_url eval_dv_step conf'
+     end
+  | (T,F) ->
+     branch let F = lempty<assoc_runningServiceState> conf._SS_._SS_r in
+            let conf' = eval_ServerStep world conf in
+            simulateWebi_first_inits world map_url eval_dv_step conf'
+     or     let F = lempty<assoc_runningServiceState> conf._SS_._SS_e in
+            let conf' = eval_RetService world conf in
+            simulateWebi_first_inits world map_url eval_dv_step conf'
+     or     let F = lempty<assoc_runningServiceState> conf._SS_._SS_e in
+            let conf' = eval_RetServiceDiscard world conf in
+            simulateWebi_first_inits world map_url eval_dv_step conf'
+     or     let F = lempty<assoc_runningServiceState> conf._SS_._SS_e in
+            let F = lempty<assoc_webClient> conf._CC_._CC_boot in
+            let conf' = eval_RetServiceBoot world conf in
+            simulateWebi_first_inits world map_url eval_dv_step conf'
+     or     let F = lempty<assoc_webClient> conf._CC_._CC_r in
+            let conf' = eval_ClientStep world conf in
+            simulateWebi_first_inits world map_url eval_dv_step conf'
+     or     let F = lempty<assoc_webClient> conf._CC_._CC_c in
+            let conf' = eval_SafeClientCall world map_url conf in
+            simulateWebi_first_inits world map_url eval_dv_step conf'
+     or     let F = lempty<assoc_webClient> conf._CC_._CC_c in
+            let conf' = eval_UnsafeClientCall world map_url conf in
+            simulateWebi_first_inits world map_url eval_dv_step conf'
+     or     let F = lempty<assoc_webClient> conf._CC_._CC_t in
+            let conf' = eval_Run world conf in
+            simulateWebi_first_inits world map_url eval_dv_step conf'
+     or     let F = lempty<assoc_runningServiceState> conf._SS_._SS_a in
+            let conf' = eval_DeviceSensor world eval_dv_step conf in
+            let conf'' = eval_SafeDeviceActuation world eval_dv_step conf' in
+            simulateWebi world map_url eval_dv_step conf''
+     or     let F = lempty<assoc_runningServiceState> conf._SS_._SS_a in
+            let conf' = eval_DeviceSensor world eval_dv_step conf in
+            let conf'' = eval_UnsafeDeviceActuation world eval_dv_step conf' in
+            match conf'' with
+            | Error _ -> conf''
+            | Ok conf'' -> simulateWebi world map_url eval_dv_step conf''
+            end
+     or     let F = lempty<assoc_runningServiceState> conf._SS_._SS_g in
+            let conf' = eval_DeviceSensor world eval_dv_step conf in
+            let conf'' = eval_DeviceReading world eval_dv_step conf' in
+            simulateWebi_first_inits world map_url eval_dv_step conf''
+     end
+  end
+
+val _thatsallfolks : str
+
+
+(*#######################################################################################*)
+(* Scheduler *)
+type schedulerCTX := (schedulerStep,webiConfiguration)
+type schedulerCTXo := (schedulerStep,out)
+type schedulerStep = | IN | SS | RS | DV | CS | CC | RN | END
+
+val _serviceInit : str
+val _serverStep : str
+val _retService : str
+val _retServiceBoot : str
+val _retServiceDiscard : str
+val _clientStep : str
+val _clientCall : str
+val _deviceSensor : str
+val _deviceActuator : str
+val _deviceReading : str
+val _run : str
+
+
+val simulateWebi_scheduler (world:worldSetting) (map_url:url_map) (eval_dv_step:_IC_eval) (ctx:schedulerCTX) : schedulerCTXo =
+    let step1 = λ recall : (schedulerCTX -> schedulerCTX) -> λ (step,conf) : schedulerCTX ->
+                    match step with
+                    | IN -> let b_ia = lempty<webClientBoot> conf._I_._Ia_ in
+                            let b_is = lempty<webClientBoot> conf._I_._Is_ in
+                            let b = and(b_ia,b_is) in
+                            match b with
+                            | F -> branch  let conf' = eval_ServiceInitSafe world map_url conf in
+                                           recall (IN,conf')
+                                   or      let conf' = eval_ServiceInitUnsafe world map_url conf in
+                                           recall (IN,conf')
+                                   end
+                            | T -> (SS,conf)
+                            end
+                    | _ -> (SS,conf)
+                    end in
+    let ctx_1 = fix<schedulerCTX,schedulerCTX> step1 ctx in
+    let step2 = λ recall : (schedulerCTX -> schedulerCTX) -> λ (step,conf) : schedulerCTX ->
+                    match step with
+                    | SS -> let b = lempty<assoc_runningServiceState> conf._SS_._SS_r in
+                            match b with
+                            | F -> let conf' = eval_ServerStep world conf in
+                                   recall (SS,conf')
+                            | T -> (RS,conf)
+                            end
+                    | _ -> (RS,conf)
+                    end in
+    let ctx_2 = fix<schedulerCTX,schedulerCTX> step2 ctx_1 in
+    let step3 = λ recall : (schedulerCTX -> schedulerCTX) -> λ (step,conf) : schedulerCTX ->
+                    match step with
+                    | RS -> let b = lempty<assoc_runningServiceState> conf._SS_._SS_e in
+                            match b with
+                            | F -> branch let conf' = eval_RetService world conf in
+                                          recall (RS,conf')
+                                   or     let conf' = eval_RetServiceDiscard world conf in
+                                          recall (RS,conf')
+                                   or     let conf' = eval_RetServiceBoot world conf in
+                                          recall (RS,conf')
+                                   or     (DV,conf)
+                                   end
+                            | T -> (DV,conf)
+                            end
+                    | _ -> (DV,conf)
+                    end in
+    let ctx_3 = fix<schedulerCTX,schedulerCTX> step3 ctx_2 in
+    let step4 = λ recall : (schedulerCTX -> schedulerCTXo) -> λ (step,conf) : schedulerCTX ->
+                    match step with
+                    | DV -> branch let F = lempty<assoc_runningServiceState> conf._SS_._SS_a in
+                                   let conf' = eval_DeviceSensor world eval_dv_step conf in
+                                   let conf'' = eval_SafeDeviceActuation world eval_dv_step conf' in
+                                   recall (DV,conf'')
+                            or     let F = lempty<assoc_runningServiceState> conf._SS_._SS_a in
+                                   let conf' = eval_DeviceSensor world eval_dv_step conf in
+                                   let conf'' = eval_UnsafeDeviceActuation world eval_dv_step conf' in
+                                   match conf'' with
+                                   | Error _ -> (CS, conf'')
+                                   | Ok conf'' -> recall (DV,conf'')
+                                   end
+                            or     let F = lempty<assoc_runningServiceState> conf._SS_._SS_g in
+                                   let conf' = eval_DeviceSensor world eval_dv_step conf in
+                                   let conf'' = eval_DeviceReading world eval_dv_step conf' in
+                                   recall (DV,conf'')
+                            or     (CS, Ok conf)
+                            end
+                    | _ -> (CS,Ok conf)
+                    end in
+    let ctx_4 = fix<schedulerCTX,schedulerCTXo> step4 ctx_3 in
+    match ctx_4 with
+    | (_, Error _) -> ctx_4
+    | (step, Ok conf) ->
+    let ctx_4 = (step, conf) in
+    let step5 = λ recall : (schedulerCTX -> schedulerCTX) -> λ (step,conf) : schedulerCTX ->
+                    match step with
+                    | CS -> let b = lempty<assoc_webClient> conf._CC_._CC_r in
+                            match b with
+                            | F -> let conf' = eval_ClientStep world conf in
+                                       let b = termination_condition conf' in
+                                       match b with
+                                       | T -> (END, conf')
+                                       | F -> recall (CS,conf')
+                                       end
+                            | T -> (CC, conf)
+                            end
+                    | END -> (END,conf)
+                    | _ -> (CC,conf)
+                    end in
+    let ctx_5 = fix<schedulerCTX,schedulerCTX> step5 ctx_4 in
+    let step6 = λ recall : (schedulerCTX -> schedulerCTX) -> λ (step,conf) : schedulerCTX ->
+                    match step with
+                    | CC -> let b = lempty<assoc_webClient> conf._CC_._CC_c in
+                            match b with
+                            | F -> branch let conf' = eval_SafeClientCall world map_url conf in
+                                          recall (CC,conf')
+                                   or     let conf' = eval_UnsafeClientCall world map_url conf in
+                                          recall (CC,conf')
+                                   end
+                            | T -> (RN,conf)
+                            end
+                    | END -> (END,conf)
+                    | _ -> (RN,conf)
+                    end in
+    let ctx_6 = fix<schedulerCTX,schedulerCTX> step6 ctx_5 in
+    let step7 = λ recall : (schedulerCTX -> schedulerCTX) -> λ (step,conf) : schedulerCTX ->
+                    match step with
+                    | RN -> let (l,_) = find_thunks conf._CC_._CC_t in
+                            let b = lempty<assoc_webClient> l in
+                            match b with
+                            | F -> branch let conf' = eval_Run world conf in recall (RN,conf')
+                                   or     (SS,conf)
+                                   end
+                            | T -> (SS,conf)
+                            end
+                    | END -> (END,conf)
+                    | _ -> (SS,conf)
+                    end in
+    let (step_7,conf_7) = fix<schedulerCTX,schedulerCTX> step7 ctx_6 in
+    match step_7 with
+    | END -> (END, Ok conf_7)
+    | _ -> simulateWebi_scheduler world map_url eval_dv_step (SS,conf_7)
+    end
+    end
+
+
