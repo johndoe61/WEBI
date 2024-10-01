@@ -1,6 +1,6 @@
 # Description of the Repository
 
-In this repository we provied additional material for the submission at IEEE S&P 24'.
+In this repository we provied additional material for the submission at IEEE CSF 25'.
 The structure of the repository is the following:
 * WEBIot implementation (`./webiot_implementation`): section 5
   - WEBIot scheduler semantics and proofs (`./webiot_scheduler_semantics_proof`).
